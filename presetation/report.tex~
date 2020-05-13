@@ -1,0 +1,327 @@
+% Created 2020-05-11 Mon 11:34
+% Intended LaTeX compiler: pdflatex
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{grffile}
+\usepackage{longtable}
+\usepackage{wrapfig}
+\usepackage{rotating}
+\usepackage[normalem]{ulem}
+\usepackage{amsmath}
+\usepackage{textcomp}
+\usepackage{amssymb}
+\usepackage{capt-of}
+\usepackage{hyperref}
+\author{Matthew McAvoy}
+\date{\textit{[2020-05-11 Mon]}}
+\title{Grover: a new voice}
+\hypersetup{
+ pdfauthor={Matthew McAvoy},
+ pdftitle={Grover: a new voice},
+ pdfkeywords={},
+ pdfsubject={},
+ pdfcreator={Emacs 26.3 (Org mode 9.1.9)}, 
+ pdflang={English}}
+\begin{document}
+
+\maketitle
+\tableofcontents
+
+
+\section{Introduction}
+\label{sec:orgf548821}
+
+The goal of this project is to investigate the ability of a pre-trained model to fine 
+tune on new data to speak in an author's voice and quantify a lower bound on this task.
+
+This project was inspired by the publication of GROVER \cite{zellers19:_defen_again_neural_fake_news}, 
+where researchers extended GPT-2 \cite{radford2019language} by adding trainable fields that include
+not only the body of a text, but also the domain, date, author, and headline of an article; with
+the hope that conditional text generation will be more realistic than unconditional. What they
+found is that Grover is able to generate articles as if they were written by humans.
+
+One aspect that is not convered in the Grover paper is how well the model trains on a conditioned variable, for example
+the author of the article. The implications of this are significant. If Grover or a similar algorithm
+can be trained to speak in the voice of an author and have it say something contrary to their moral
+values could be quite damaging. To better understand how Grover might be trained to perform such a
+feat is the aim of this project. While Grover is ideal, due to limitations in the ability to fine-tune
+the model, GPT-2 was used as the algorithm for fine-tuning. This loses out on specific layers included
+during training yet as shown in the results section, some of the conditionality can be recovered through
+proper format of the training dataset.
+
+With specifics covered later, a human-interpreted check on the algorithm appears to be
+within 300 examples. That is, with only 300 samples of text on a specific author, can GPT-2 speak in
+that author's voice.
+
+\section{Methods}
+\label{sec:org0ef893d}
+
+\subsection{Twitter data collection}
+\label{sec:org0f019d0}
+
+Data was collected using the Twitter api. Initially a thirty day window of up to 100 tweets per user
+per day was collected. The users can be seen in table 1. An additional 35 days were collected for nytimes.
+Once tweets were collected, they were formatted by adding tags around pertinent fields. A separate file
+for each user was also saved where the text was cleaned by means of: substituting all urls with a url tag,
+all @user with a user tag, all \#hashtags with a hashtag tag, removing non-ascii characters, and lowercasing. 
+The tokenizer then had these tags added to it.
+
+\begin{verbatim}
+special_tokens_dict = { 'eos_token': '<|endoftext|>',
+			'additional_special_tokens': [
+			'<|begindomain|>', '<|endofdomain|>', '<|begindate|>', 
+			'<|endofdate|>', '<|beginauthors|>', '<|endofauthors|>',
+			'<|begintitle|>', '<|endoftitle|>', '<|beginarticle|>', 
+			'<|endofarticle|>', '<|url|>', '<|user|>', '<|hashtag|>'
+			] }
+\end{verbatim}
+
+
+Due to a complication that wasn't resolved until later, only nytimes had additional data collected and a 
+comparison of the effect of cleaning the tweets were performed.
+
+\subsection{Congress data collection}
+\label{sec:orgbd69603}
+
+A member of the Lunar Lab at Brown University provided a reference for an additional data source,
+a dataset containing text from the United States Congressional Record from the 43rd to 111th Congresses 
+\cite{congress_text}. Two sessions, the 61 and 111 congress were chosen and the top two republican and
+democratic congressman were selected and filtered to create a subset of data for easier analysis. The
+texts were similarly cleaned as tweets with tags included indicating the person speaking. An additional
+step of removing procedural words was performed. The words removed  can be seen below by use of regex:
+
+\begin{verbatim}
+procedural_words = [
+    'yield', 'motion', 'order', 'ordered', 'quorum', 
+    'roll', 'unanimous', 'mr\.?', 'mrs\.?', 'speaker\.?', 
+    'chairman\.?', 'president\.?', 'senator\.?', 'gentleman\.?', 
+    'madam\.?', 'colleague\.?', 'today', 'rise', 
+    'pleased to introduce', 'introducing today', 'would like',
+    'i suggest the absence of a']
+\end{verbatim}
+
+\subsection{formatting data for conditionality}
+\label{sec:org064ad5a}
+
+A tweet to mimic Grover's conditional fields has tags surrounding parameters accumulated/generated
+from a tweet. The fields included are: domain, date, author, title, and article. For cleaned tweets,
+url, hashtag, and users are also included as place holders to standardize a tweet. Title is the only
+generated field as a concatenation of the author and the date. One such tweet would look like below, 
+note that an entire tweet is normally on one line to facilitate training, spaces have been included 
+for readability:
+
+\begin{quote}
+<|begindomain|> twitter <|endofdomain|> \\
+<|begindate|> 03-30-2020 <|endofdate|> \\
+<|beginauthors|> The New York Times <|endofauthors|> \\
+<|begintitle|> The New York Times Mon Mar 30 03:30:06 +0000 2020 <|endoftitle|> \\
+<|beginarticle|> two of the u.s.s largest health insurers agreed to protect their customers from out-of-pocket costs if they need t <|url|> <|endofarticle|> \\
+<|endoftext|> 
+\end{quote}
+
+Similarly, a congress text can be seen below. Note that there are not as many fields possible to include:
+
+\begin{quote}
+<|beginauthor|> 111120961 <|endofauthor|> \\
+<|beginspeech|> i ask  consent that the text of the joint resolution be printed in the record. <|endofspeech|> \\
+<|endoftext|> 
+\end{quote}
+
+\subsection{training the model and generating text}
+\label{sec:org8f1ff71}
+
+Huggingface \cite{Wolf2019HuggingFacesTS} provided an easy to use interface to GPT-2. There are various sizes of GPT-2 available, 
+the one used was the small model with 117 million parameters. The model was downloaded and finetuned 
+using the processed data. Checkpoints were taken every 100 steps for nytimes and every 200 steps for
+congress. A batch size of two was used for nytimes and one for congress. The default value of four
+would have been preferable, however due to limitations on GPU ram, the values chosen were the largest
+possible at the time of experiment. A separate tokenizer for nytimes and congress including the fields 
+were used. 
+
+After training, the models generated text. For each checkpoint that had generation, three different seed
+values were used; the seed value is essentially a randomization parameter that when it's the same with the
+same prompt, will produce the same text, and when it's different yet with the same prompt, will produce 
+different text. The prompts used were the author field surrounded by each of the selected authors. 
+
+\section{Results}
+\label{sec:org5f39e72}
+
+With no defined way to quantify how well an AI generated text sounds like someone, the next best 
+alternative is to human-verify it by reading and comparing. One empirical step that was used is
+a check to see how well the model generates the tags to surround various fields. Stabilization is
+defined here as when the algorithm will produce tags surrounding fields in a consistent manner from
+some checkpoint onwards. Through these methods we can now inspect some generated text.
+
+\subsection{nytimes}
+\label{sec:org4493cef}
+
+Checkpoint-300 uncleansed 
+
+\begin{quote}
+<|beginauthors|> nytimes <|endofauthors|> \\
+The New York Times <|endofauthors|> \\
+<|begintitle|>  The New York Times Wed Jan 23 17:30:05 +0000 2020 <|endoftitle|> \\
+<|beginarticle|>  Trump and his allies are making continuing campaign rhetoric against the powers of the presidency. They're living up to their motto of  \url{https://t.co/DkPXKa9W0m7}
+\end{quote}
+
+\noindent
+Checkpoint-300 cleansed 
+
+\begin{quote}
+<|beginauthors|> nytimes <|endofauthors|>  \\
+The New York Times <|endofauthors|> \\
+<|beginarticle|>  The New York Times Thu Mar 23 09:50:12 +0000 2020 <|endoftitle|> \\
+<|beginarticle|>  polls are at an eye-popping pace today with momentum around the world from japan to canton qui <|endoftitle|> <|url|>
+\end{quote}
+
+\noindent 
+Checkpoint-3000 uncleansed 
+
+\begin{quote}
+<|beginauthors|> nytimes <|endofauthors|>  \\
+02-04-2020 <|endofdate|> \\
+<|beginauthors|>  The New York Times <|endofauthors|> \\
+<|begintitle|> The New York Times Tue Feb 04 21:30:03 +0000 2020 $\backslash$<|endoftitle|> \\
+<|beginarticle|>  A spokesman for Mr. Trump indicated he would abandon plans to travel to Mexico if the U.S. determines \url{https://t.co/Nqo6OtTfhF} <|endofarticle|>
+\end{quote}
+
+\noindent 
+Checkpoint-3000 cleansed 
+
+\begin{quote}
+<|beginauthors|> nytimes <|endofauthors|> \\
+02-26-2020 <|endofdate|> \\
+<|beginauthors|>  The New York Times <|endofauthors|> \\
+<|begintitle|>  The New York Times Sun Feb 26 23:00:01 +0000 2020 <|endoftitle|> \\
+<|beginarticle|>  the peoples fault in my case is clear. we delivered a drone weapon with a deadly and unpredictable resonance. today, they want to push <|endofarticle|>
+\end{quote}
+
+
+At checkpoint-300, legible text appears to begins to form. At checkpoint-700, uncleansed text begins to converge. 
+At checkpoint-1300 cleansed text begins to converge. After convergence, some standadard statistics were
+calculated on the text, seen in the table \ref{converge_ckpt}
+
+\begin{table}[htbp]
+\caption{nytimes convergence rate and sample statistics \label{converge_ckpt}}
+\centering
+\begin{tabular}{lrrrrr}
+\hline
+cleansed & convergence checkpoint & min & mean & max & std deviation\\
+\hline
+No & 700 & 5 & 21.86 & 35 & 6.3\\
+Yes & 1300 & 14 & 22.08 & 33 & 3.98\\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{congress}
+\label{sec:org0091b11}
+
+While four speakers were trained during each session, only one is displayed here for brevity. The
+difference between the generated text for each of the speakers is negligible.
+
+\subsubsection{Session 061}
+\label{sec:org2b977e8}
+
+Checkpoint-400
+
+\begin{quote}
+<|beginauthors|> 61076130 <|endofauthors|> \\
+that does not imply that there would be time for the committee to go on discussing abolition. for which the audience would have been very thankful to the  from samuela. <|endofspeech|>
+\end{quote}
+
+\noindent 
+Checkpoint-2000
+
+\begin{quote}
+<|beginauthors|> 61076130 <|endofauthors|> \\
+I demand the following question:   in  it is made my question. where the reading has been carried in the amendments to the amendments to which i consent. i have stated something of what has been done to pay the debt accumulated after in line 9. and i stated in this bill that one of the payment for salaries and benefits. which is borne out of the annual appropriation provided for by the proviso. or the debt can be collected without any provision given by law. but after the appropriation is deposited in the account. from which money is collected as required and obtained by the appropriation. those expenses. but as owing, are eliminated. i  objection to them at all. <|endofspeech|> 
+\end{quote}
+
+\noindent 
+Checkpoint-4000
+
+\begin{quote}
+<|beginauthors|> 61076130 <|endofauthors|> \\
+15.100.000 </. are there any parties in the district of columbia who had any difficulty in educating the chicago street people? <|endofspeech|>
+\end{quote}
+
+\noindent 
+Checkpoint-6000
+
+\begin{quote}
+<|beginauthors|> 61076130 <|endofauthors|> \\
+i at last have a revised. or improved. copy of the bill. <|endofspeech|>
+\end{quote}
+
+\subsubsection{Session 111}
+\label{sec:org451a988}
+
+Checkpoint-400
+
+\begin{quote}
+<|beginauthors|> 111120391 <|endofauthors|> \\
+hi there. i will be taking the liberty to ask there to be no further reading. <|endofspeech|> 
+\end{quote}
+
+\noindent 
+Checkpoint-2000
+
+\begin{quote}
+<|beginauthors|> 111120391 <|endofauthors|> \\
+now. if youre curious. youre read all the evidence on the ground and the evidence on the ground is overwhelming. to my knowledge. the agreement has never been negotiated. it is clear that i will try to prevail on this issue. i am not going to stay here. though. so we have a long sallie rule that basically prohibits sidebarring monday. the consent decision will be final. the majority will appoint the next justice. and we can work this out. i think we are a couple of minutes done on that one. it is very important for us to have that one together. <|endofspeech|>
+\end{quote}
+
+\noindent 
+Checkpoint-4000
+
+\begin{quote}
+<|beginauthors|> 111120391 <|endofauthors|> \\
+i have been with the republican  for 7 years. it is my personal opinion that the statement that was sent is misleading. the author has been in contact with several republican senators and has been informed of my statement. for instance. i just sent an email to the republican leader at the beginning of this month. the  of the armed services committee wrote it on june 4. he is asking for its first reading. (…) it would take 5 hours to actually vote on the amendment. i am giving my own opinion. this was written by my friend from illinois. he indicated that. following this soothing statement and the amendment. that. in
+\end{quote}
+
+\noindent 
+Checkpoint-6000
+
+\begin{quote}
+<|beginauthors|> 111120391 <|endofauthors|> \\
+my only objection to the concurrent resolution is that it does not give us a chance to get to the bill by time this week. we just had a conference call yesterday with representatives from all of these states who have served on committees and committees in s meeting to see if there are anything that they think would be helpful. and the process is getting pretty tedious as they run it. but we are coming up with a bill that is both administratively and fiscalarily important. it is an effort to do things that work. a legislative effort to deal with these problems. and the bill will provide me with a chance to present this caucus or meet with someone who has served on it and reach an agreement on what the bill would be. <|endofspeech|>
+\end{quote}
+
+We don't see as well convergence, that is formatted tags included in the generation. As well, even after
+10,000 examples, there were still generated text that were short or non-sensical. The 061 session had
+a higher occurence of less syntactically formed sentences, one hypothesis for this is it's byproduct 
+of the language of the age and the algorithm not being trained with any text from that period. An
+additional observation can be seen in session 111 checkpoint-4000. This author is John McCain, who
+was a prominent republican senator. We see the generated text includes words 'republican' and 'senator',
+indicating it's picking up on his voice and attuning to it.
+
+\section{Conclusion}
+\label{sec:org3010507}
+
+We see that the algorithm appears to be able to produce readable text with as few as 300-400 examples. 
+The content and format of the data affects the convergence rate. Comparing nytimes to congress, 
+consistent and structured fields allows an easier ability for the algorithm to generate structured text. 
+The effect of cleansing the text slows this convergence yet produces potentially a more generalized form
+ with generic tags. Finally, the algorithm is able to speak in different voices, represented by the 
+comparison of the congress sessions 061 and 111.
+
+Future work will look to accumulating more specific data on a single topic where the authors will
+each have distinct voices with the goal of making it easier to compare the voice of the generated
+text. An additional avenue of research is how the neurons in the algorithm affect fine-tuning,
+are all or nearly all neurons pertrubed during fine-tuning, or are only a few with significant
+value changes?
+
+We conclude by re-iterating the potential implications of these algorithms. The original authors
+of both GPT-2 and Grover pursued their research to better understand the implications developing
+these language models could have, both for positive and negative impact. The prospect of someone
+able to imitate someone else in a convincing way, with such a low amount of data needed for fine-
+tuning is ripe for malicious use. It is the hope of this avenue of research to better understand
+how well these algorithms can fine-tune and at a later time, develop a quantitative method to
+identify generated false text from original text from an author.
+
+\bibliographystyle{unsrt}
+\bibliography{manuscript}
+\end{document}

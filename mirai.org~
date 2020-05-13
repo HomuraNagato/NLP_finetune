@@ -1,0 +1,2485 @@
+
+* project goal
+
+investigate the ability of a pre-trained model (eg. from grover) to speak in an author's 
+voice. An author might be Paul Krugman from NY Times. How many examples (eg. data points)
+are needed to allow the model to speak in a new author's voice. This will require
+
+ - having a generator model that can be further trained with an important data point
+   being the author of the article
+ - explicitly telling the model what voice to generate an article in
+
+** author's importance in learning
+
+how does the model know to speak in an author's voice? It is a metadata field (identified
+[[https://github.com/rowanz/grover/blob/master/discrimination/run_discrimination.py][here]]), but can't find a specific reference to author otherwise, even in model building in
+model_fn (same page).
+
+* grover and gpt2
+
+https://grover.allenai.org
+
+[[https://github.com/huggingface/transformers/blob/master/examples/run_language_modeling.py][huggingface run_language_modeling.py]]
+[[https://huggingface.co/transformers/main_classes/model.html?highlight=from_pretrained#transformers.TFPreTrainedModel.from_pretrained][huggingface from_pretrained]]
+
+
+** data format
+
+jsonl converted to TFRecord
+ - "title":"Reynolds High School tragedy: more laws are not the answer",
+ - "text":""
+ - "summary":null,
+ - "authors":["In The News"],
+ - "publish_date":"06-13-2104",
+ - "status":"success",
+ - "url":"http:\/\/oregoncatalyst.com\/27758-reynolds-high-school-tragedy-laws-answer.html",
+ - "domain":"oregoncatalyst.com",
+ - "warc_date":"2016-12-11T13:48:31Z",
+ - "split":"train"
+
+twitter columns
+Index(['tweets', 'date', 'user_name', 'user_screen_name', 'user_followers',
+       'user_friends', 'user_verified', 'user_language', 'retweet_count',
+       'favorite_count']
+
+** specific training
+
+python3 lm/S2_train.py -input_file data/nytimestrain0000.tfrecord -output_dir checkpoints/ -config_file lm/configs/base.json -init_checkpoint models/base/model.ckpt \
+ -max_seq_length 8 -training_batch_size 1
+ - edited file paths for imports in dependencies
+
+** jsonl to tf_record
+
+cd grover
+export PYTHONPATH=$(pwd)
+python3 realnews/prepare_lm_data.py -input_fn 'data/nytimes_2020-01-26_2020-02-10.jsonl' -base_fn 'data/twitter'
+
+** model description
+
+ - both are transformers
+ - built architecture similar to GPT2
+   - novel introduction of context as a sorted concatenation of tokens, such as domain,
+     date, authors, headline, and body, define these tokens as fields
+   - randomly partition fields into two disjoint sets F1 and F2
+   - 10% probability of zeroing out individual fields and 35% for body, this helps with
+     unconditional generation
+     - so p(body) = body??
+     - normally p(body | domain, authors, headline) or p(authors | body, domain, headline)
+   - use F1 to predict F2
+   - also have constructed realnews dataset. 120GB uncompressed (GPT2 trained on 40GB?)
+   - trained from random sample from realnews dataset with length 1024.
+
+ - perplexity calculated on article body, conditional (so knowledge of metadata) 
+ - generating text uses nulceus sampling
+   - at each timestep sample from the set of words comprising top-p% of entire vocabulary
+
+*** gpt2
+
+[[https://jalammar.github.io/illustrated-gpt2/][values for gpt2 taken from this illustrated guide]]
+
+|------------------+------------+--------+-----------------|
+| model            | parameters | layers | embedding shape |
+|------------------+------------+--------+-----------------|
+| gpt2-small       | 117M       |        |             768 |
+| gpt2-medium      | 345M       |        |            1024 |
+| gpt2-large       | 762M       |        |            1280 |
+| gpt2-extra-large | 1542M      |        |            1600 |
+|                  |            |        |                 |
+| grover-base      | 124M       |     12 |                 |
+| grover-large     | 355M       |     24 |                 |
+| grover-mega      | 1500M      |     48 |                 |
+|------------------+------------+--------+-----------------|
+
+hugging face provides a pre-trained gpt-2 model with 124M parameters. This corresponds to 
+the small version of GPT2, or grover-base
+
+*** grover
+
+grover comes in three sizes
+ - base: 124M parameters           12 layers
+ - large: 355M parameters
+
+* twitter_data
+
+Objective: collect twitter data to train Grover model
+
+should twitter data not be sufficient, inspect:
+    [[https://newspaper.readthedocs.io/en/latest/user_guide/quickstart.html#news-articles][newspaper3k]] a web scraper to multiple sites, eg cnn
+    - scrape and build a json that can be fed into grover
+
+nytimes dataset word summary
+2020-01-26_2020-02-10
+text min: 1      max: 29         mean: 19        S2 shape: (1513,10)
+2020-02-11_2020-02-24
+text min: 7      max: 28         mean: 19        S2 shape: (1285,10)
+
+washingtonpost dataset word summary
+2020-01-26 2020-01-31
+text min: 7      max: 26         mean: 15        S2 shape: (535,10)
+2020-02-01 2020-02-24
+text min: 6      max: 29         mean: 14        S2 shape: (2065,10)
+
+sensanders dataset word summary
+2020-01-26 2020-01-31
+text min: 11     max: 28         mean: 20        S2 shape: (31,10)
+2020-02-01 2020-02-24
+text min: 14     max: 27         mean: 20        S2 shape: (115,10)
+
+realdonaldtrump dataset word summary
+2020-01-26 2020-01-31
+text min: 6      max: 28         mean: 19        S2 shape: (246,10)
+2020-02-01 2020-02-24
+text min: 6      max: 30         mean: 19        S2 shape: (662,10)
+
+
+concat txt files into larger data file
+
+cat data/file_most_recent.txt data/file_least_recent.txt > data/file_date_entire_range.txt
+eg. 
+cat data/nytimes_2020-02-11_2020-02-24.txt data/nytimes_2020-01-26_2020-02-10.txt > data/nytimes_2020-01-26_2020-02-24.txt
+
+or use prototype.py where --concat is in decreasing date order, eg --concat march.csv feb.csv jan.csv
+
+** support
+
+[[https://dev.to/twitterdev/using-the-twitter-api-to-make-your-commute-easier-3od0][yaml example]]
+
+** potential accounts
+
+|-------------------+-----------------+--------------+---------|
+| user              | account name    | total tweets | day avg |
+|-------------------+-----------------+--------------+---------|
+| Barack Obama      | barackobama     | 17.5k        |       1 |
+| Bernie Sanders    | sensanders      | 21.1k        |       5 |
+| Donald Trump      | realdonaldtrump | 48.9k        |       6 |
+| BBC Breaking News | BBCBreaking     | 36.3k        |       4 |
+| NY Times          | nytimes         | 385.8k       |    ~100 |
+| Washington Post   | washingtonpost  | 347.6k       |    ~100 |
+|-------------------+-----------------+--------------+---------|
+
+** data format
+
+*** expected
+Oneline
+{"title":"Reynolds High School tragedy: more laws are not the answer",
+"text":"by In the news\nby Dan Lucas\",
+"summary":null,
+"authors":["In The News"],
+"publish_date":"06-13-2014",
+"status":"success",
+"url":"http:\/\/oregoncatalyst.com\/27758-reynolds-high-school-tragedy-laws-answer.html",
+"domain":"oregoncatalyst.com",
+"warc_date":"2016-12-11T13:48:31Z",
+"split":"train"}
+
+{"title":"The New York Times Sun Feb 09 00:00:22 +0000 2020",
+"text":"Afghan security officials ",
+"summary":"",
+"authors":"The New York Times",
+"publish_date":"Sun Feb 09 00:00:22 +0000 2020",
+"status":"success",
+"url":"twitter"}
+
+{"title":"The New York Times Sun Feb 09 00:00:22 +0000 2020",
+"text":"Afghan security officials say the country\",
+"summary":null,
+"authors":"The New York Times",
+"publish_date":"Sun Feb 09 00:00:22 +0000 2020",
+"status":"success",
+"url":"twitter",
+"domain":"twitter",
+"warc_date":"2020-02-17",
+"split":"train"}
+
+** twitter text length
+
+(longest author is washingtonpost)
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-23-2020<|endofdate|><|beginauthors|>The New York Times<|endofauthors|><|begintitle|>
+The New York Times Sun Feb 23 00:24:07 +0000 2020<|endoftitle|><|beginarticle|>
+RT @motokorich: 1/ When the Diamond Princess  docked in Yokohama after confirming that a passenger who got off in Hong Kong tested positiveâ¦<|endofarticle|><|endoftext|>
+
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-23-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>
+The Washington Post Sun Feb 23 00:04:48 +0000 2020<|endoftitle|><|beginarticle|>Live updates: Nevada GOP unanimously awards Trump its 25 delegates https://t.co/Q4QY7zpd8k
+<|endofarticle|><|endoftext|>
+
+Total text length: 337 characters
+article length: 90
+twitter updated tweet length to 280 characters in 2017.11
+average length is 34 characters
+tags account for up to 247 characters
+max length should then be 247+280=527
+
+** preprocess
+
+ - remove all punctuation
+    - remove all punctuation except tilde's?
+ - replace links with a tag (<url>
+ - lemmatization (convert word to dictionary form)
+   - deploying and deployed become deploy
+ - retain stop words (likely fine?)
+
+* congress data 
+
+[[https://data.stanford.edu/congress_text#download-data][data link]]
+
+* compute_grid
+
+[[https://cs.brown.edu/about/system/services/hpc/gridengine/][comput_grid help page]]
+
+stat script
+    qstat
+
+run script
+    qsub -l gpus=1 runme
+
+include in script to include a gpu at cwd with python env packages already installed
+#!/bin/bash
+#$ -cwd -l gpus=1 
+. ~/Library/compute_grid_venv/bin/activate
+{python script.py}
+deactivate
+
+* TODO
+
+ - identify way author is being used in Grover model
+ - test twitter converted data to train on grover model
+ - twitter data min, mean, max text length
+ - inspect ways checkpointing works to modify for easy model probing
+ - search training code for add_special_tokens ala [[https://huggingface.co/transformers/main_classes/tokenizer.html][tokenizer link]]
+
+| Authors         | 30 day data |
+|-----------------+-------------|
+| nytimes         |             |
+| BBCBreaking     |             |
+| realdonaldtrump |             |
+| sensanders      |             |
+
+
+** add tokenizer
+
+run_language_modeling.py
+args: --tokenizer_name
+      Optional pretrained tokenizer name or path if not the same as model_name_or_path. If both are None, initialize a new tokenizer
+
+download gpt2 tokenizer and add special tokens then save
+
+run_generation.py
+ - updated tokenizer saved along with config?
+
+* preliminary results
+** errors
+
+grover
+ - OOM
+   - Tesla T4 15GB memory. allocates 14.5GB with seq_length = 8, batch_size = 1
+ - Freezes on opening cuda library
+
+num_examples
+
+len(tokenized_text) / block_size = 395061 / 1024 = 385.8
+
+** tests regular tokenizer
+
+*** nytimes
+
+**** training script
+
+python run_language_modeling.py \
+    --output_dir=ckpt_nytimes \
+    --overwrite_output_dir \
+    --cache_dir=models \
+    --model_type=gpt2 \
+    --model_name_or_path=gpt2 \
+    --logging_steps=100 \
+    --save_steps=100 \
+    --do_train \
+    --per_gpu_train_batch_size=1 \
+    --train_data_file=data/nytimes_2020-01-26_2020-02-24.txt
+
+num_examples = 385
+num_epochs = 1
+
+Training/evaluation parameters Namespace(adam_epsilon=1e-08, block_size=1024, cache_dir='models', config_name=None, 
+device=device(type='cuda'), do_eval=False, do_train=True, eval_all_checkpoints=False, eval_data_file=None, evaluate_during_training=False, 
+fp16=False, fp16_opt_level='O1', gradient_accumulation_steps=1, learning_rate=5e-05, line_by_line=False, local_rank=-1, logging_steps=100, 
+max_grad_norm=1.0, max_steps=-1, mlm=False, mlm_probability=0.15, model_name_or_path='gpt2', model_type='gpt2', n_gpu=1, no_cuda=False, 
+num_train_epochs=1.0, output_dir='ckpt_nytimes', overwrite_cache=False, overwrite_output_dir=True, per_gpu_eval_batch_size=4, per_gpu_train_batch_size=1, 
+save_steps=100, save_total_limit=None, seed=42, server_ip='', server_port='', should_continue=False, tokenizer_name=None, train_data_file='data/nytimes_2020-01-26_2020-02-24.txt', 
+warmup_steps=0, weight_decay=0.0)
+
+**** model prompt
+
+Model prompt >>> <|beginauthors|>NYTimes<|endofauthors|>
+
+**** untrained
+
+python run_generation.py --model_type=gpt2 --model_name_or_path=gpt2 --length=100
+
+<|beginauthors|>NYTimes<|endofauthors|>
+NYDN<|endofdate|>Datelines<|endofcountries|>LastTimeTypeTable<|lasttimecode|>DateTimeTable<|lasttimetype|>LastAliveDateDateComplex
+<|lastdescription|>PunctuationTable<|punctuationletter|>CharactersTable<|charactertype|>ComplexNumberTable<|complexnumber|>A PinnerIterator<|contents|>CharArrows<|!
+
+**** checkpoint-100
+
+python run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_nytimes/checkpoint-100/ --length=100
+
+<|beginauthors|>NYTimes<|endofauthors|>
+02-02-2020<|endofdate|><|beginauthors|>The New York Times Mon Feb 02 21:00:05 +0000 2020<|endoftitle|><|beginarticle|>Irina Erickson writes that a Sanders supporter 
+asked her what to do when Trump won New Hampshire and Trump won Florida. Now it's up to Sanders to determine what to do. #*<|endofarticle|><|endoftext|>
+<|begindom
+
+**** checkpoint-200
+
+python run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_nytimes/checkpoint-200/ --length=100
+
+<|beginauthors|>NYTimes<|endofauthors|>
+<|endoftext|><|begintitle|>The New York Times Wed Feb 05 12:12:05 +0000 2020<|endoftitle|><|beginarticle|>The Supreme Court on Friday allowed President Trump to clear a 
+backlog of lawsuits filed by a hospital whose cancer patients should be covered by Medicaid. Here are some points in his analysis of the case. https://t.co/kEQ0KxGVcY<|endofarticle|>
+<|endoftext|><
+
+**** checkpoint-300
+
+python run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_nytimes/checkpoint-300/ --length=100
+
+<|beginauthors|>NYTimes<|endofauthors|>
+The New York Times Sat Jan 14 14:19:29 +0000 2020<|endoftitle|><|beginarticle|>Facebook has been accused of backing down from Trumpâ¦ https://t.co/5TxfNYinY1<|endofarticle|>
+<|endoftext|><|begindomain|>twitter<|endofdomain|><|begindate|>02-14-2020<|endofdate|><|
+
+**** checkpoint-385
+
+python run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_nytimes/ --length=100
+
+<|beginauthors|>nytimes<|endofauthors|>
+The New York Times Wed Jan 16 16:10:05 +0000 2020<|endoftitle|><|beginarticle|>RT @hannitynyt: @nytpolitics: In a sign of how far we are stepping up against anti-Venezuelan 
+sentiment, Google is allowing employees in China to withhold updates from localâ¦<|endofarticle|><|endoftext|><|begindomain|>twitter<|endofdomain|><
+
+*** realdonaltrump
+
+**** training script
+
+python run_language_modeling.py \
+    --output_dir=ckpt_realdonaldtrump \
+    --overwrite_output_dir \
+    --cache_dir=models \
+    --model_type=gpt2 \
+    --model_name_or_path=gpt2 \
+    --logging_steps=100 \
+    --save_steps=100 \
+    --do_train \
+    --per_gpu_train_batch_size=1 \
+    --train_data_file=data/realdonaldtrump_2020-01-26_2020-02-24.txt
+
+Training/evaluation parameters Namespace(adam_epsilon=1e-08, block_size=1024, cache_dir='models', config_name=None, 
+device=device(type='cuda'), do_eval=False, do_train=True, eval_all_checkpoints=False, eval_data_file=None, evaluate_during_training=False, 
+fp16=False, fp16_opt_level='O1', gradient_accumulation_steps=1, learning_rate=5e-05, line_by_line=False, local_rank=-1, logging_steps=100, 
+max_grad_norm=1.0, max_steps=-1, mlm=False, mlm_probability=0.15, model_name_or_path='gpt2', model_type='gpt2', n_gpu=1, no_cuda=False, 
+num_train_epochs=1.0, output_dir='ckpt_realdonaldtrump', overwrite_cache=False, overwrite_output_dir=True, per_gpu_eval_batch_size=4, per_gpu_train_batch_size=1, 
+save_steps=100, save_total_limit=None, seed=42, server_ip='', server_port='', should_continue=False, tokenizer_name=None, train_data_file='data/realdonaldtrump_2020-01-26_2020-02-24.txt', 
+warmup_steps=0, weight_decay=0.0)
+
+num_examples = 123
+num_epochs = 1
+
+**** model prompt
+
+Model prompt >>> <|beginauthors|>realdonaldtrump<|endofauthors|>
+
+**** untrained
+
+python run_generation.py --model_type=gpt2 --model_name_or_path=gpt2 --length=100
+
+<|beginauthors|>realdonaldtrump<|endofauthors|>hostiste</|tirasenovm|>ainenagaperski<|lechmerkovonvania>maria<|thoddpechessidsvania>vyadnyyrusr<|mezanmalians
+<|madhyssii>itskaisketzeneniia<|metalspotletin>fragginae<|marquire(northern)</|valech|>rogesa<|alani
+
+**** checkpoint-100
+
+python run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_realdonaldtrump/checkpoint-100/ --length=100
+
+<|beginauthors|>realdonaldtrump<|endofauthors|>Donald J. Trump<|endofauthors|><|begintitle|>Donald J. Trump Tue Feb 21 22:07:16 +0000 2020<|endoftitle|>
+<|beginarticle|>RT @Ratto1858: @POTUS @realDonaldTrump He seems to have latched onto John Arpaio's tape by attacking him again and again. https://t.co/i9X0KwRsVGa
+<|endofarticle|><|endoftext|>
+<
+
+**** checkpoint-123
+
+python run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_realdonaldtrump/ --length=100
+
+<|beginauthors|>realdonaldtrump<|endofauthors|>Donald J. Trump<|endofauthors|><|begintitle|>Donald J. Trump Tue Feb 21 22:07:16 +0000 2020<|endoftitle|>
+<|beginarticle|>RT @Ratto1859: @Ratto1859: Why is 735 votes true for TRUMP all day? https://t.co/u56KzMXnCX#POTUS2020<|endofarticle|><|endoftext|>
+<|be
+
+*** sensanders
+
+**** training script
+
+!python run_language_modeling.py \
+    --output_dir=ckpt_sensanders \
+    --overwrite_output_dir \
+    --cache_dir=models \
+    --model_type=gpt2 \
+    --model_name_or_path=gpt2 \
+    --logging_steps=100 \
+    --save_steps=100 \
+    --do_train \
+    --per_gpu_train_batch_size=1 \
+    --train_data_file=data/sensanders_2020-01-26_2020-02-24.txt
+
+Training/evaluation parameters Namespace(adam_epsilon=1e-08, block_size=1024, cache_dir='models', config_name=None, 
+device=device(type='cuda'), do_eval=False, do_train=True, eval_all_checkpoints=False, eval_data_file=None, evaluate_during_training=False, 
+fp16=False, fp16_opt_level='O1', gradient_accumulation_steps=1, learning_rate=5e-05, line_by_line=False, local_rank=-1, logging_steps=100, 
+max_grad_norm=1.0, max_steps=-1, mlm=False, mlm_probability=0.15, model_name_or_path='gpt2', model_type='gpt2', n_gpu=1, no_cuda=False, 
+num_train_epochs=1.0, output_dir='ckpt_sensanders', overwrite_cache=False, overwrite_output_dir=True, per_gpu_eval_batch_size=4, per_gpu_train_batch_size=1, 
+save_steps=100, save_total_limit=None, seed=42, server_ip='', server_port='', should_continue=False, tokenizer_name=None, train_data_file='data/sensanders_2020-01-26_2020-02-24.txt', 
+warmup_steps=0, weight_decay=0.0)
+
+num_examples = 19
+num_epochs = 1
+
+**** model prompt
+
+Model prompt >>> <|beginauthors|>sensanders<|endofauthors|>
+
+**** untrained
+
+python run_generation.py --model_type=gpt2 --model_name_or_path=gpt2 --length=100
+
+<|beginauthors|>sensanders<|endofauthors|> https://archive.is/HXiC — demonocum -yesdb3 <|ibunshinex>!curl -L 
+https://wiki.cs3.org/Commons/v3/https://onshoreseeding/Time-Recording_Problems.php — Evil Crossroads Strategies <|ginnyxo> sign that stuff 
+http://archive.is/JT0Jt • http://gloucester.va.no/ also http
+
+**** checkpoint-19
+
+python run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_sensanders/ --length=100
+
+<|beginauthors|>sensanders<|endofauthors|> ><|beginauthors|>senslectors<|endofauthors|>><|beginauthors|>sensorsssensors<|endofauthors|>><|beginauthors|>
+sensorsssssssensors<|endofauthors|><|beginauthors|>sensorsssssensorsssensors<|endofauthors|><|beginauthors|>s
+
+*** washingtonpost
+
+**** training script
+
+!python run_language_modeling.py \
+    --output_dir=ckpt_washingtonpost \
+    --overwrite_output_dir \
+    --cache_dir=models \
+    --model_type=gpt2 \
+    --model_name_or_path=gpt2 \
+    --logging_steps=100 \
+    --save_steps=100 \
+    --do_train \
+    --per_gpu_train_batch_size=1 \
+    --train_data_file=data/washingtonpost_2020-01-26_2020-02-24.txt
+
+Training/evaluation parameters Namespace(adam_epsilon=1e-08, block_size=1024, cache_dir='models', config_name=None, 
+device=device(type='cuda'), do_eval=False, do_train=True, eval_all_checkpoints=False, eval_data_file=None, evaluate_during_training=False, 
+fp16=False, fp16_opt_level='O1', gradient_accumulation_steps=1, learning_rate=5e-05, line_by_line=False, local_rank=-1, logging_steps=100, 
+max_grad_norm=1.0, max_steps=-1, mlm=False, mlm_probability=0.15, model_name_or_path='gpt2', model_type='gpt2', n_gpu=1, no_cuda=False, 
+num_train_epochs=1.0, output_dir='ckpt_washingtonpost', overwrite_cache=False, overwrite_output_dir=True, per_gpu_eval_batch_size=4, per_gpu_train_batch_size=1, 
+save_steps=100, save_total_limit=None, seed=42, server_ip='', server_port='', should_continue=False, tokenizer_name=None, train_data_file='data/washingtonpost_2020-01-26_2020-02-24.txt', 
+warmup_steps=0, weight_decay=0.0)
+
+num_examples = 331
+num_epochs = 1
+
+**** model prompt
+
+Model prompt >>> <|beginauthors|>washingtonpost<|endofauthors|>
+
+**** untrained
+
+python run_generation.py --model_type=gpt2 --model_name_or_path=gpt2 --length=100
+
+<|beginauthors|>washingtonpost<|endofauthors|>commonsensepathways<|repository_title|>andotheredtl{|field_name}[1],[2]<|beginauthors|>washingtonpost
+<|endofauthors|>commonsensepathways<|repository_title|>andotheredtl{|field_name}[2]<|confundities|>now with me!<|abcbegins|>agitalized<|waffling
+
+**** checkpoint-100
+
+python run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_washingtonpost/checkpoint-100/ --length=100
+
+<|beginauthors|>washingtonpost<|endofauthors|>The Washington Post Thu Jan 23 16:05:08 +0000 2020<|endoftitle|><|beginarticle|>Opinion: 
+Monero getting into big shape https://t.co/DvxNb3Ehbq<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>01-23-2020<|endofdate|><|begina
+
+**** checkpoint-200
+
+python run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_washingtonpost/checkpoint-200/ --length=100
+
+<|beginauthors|>washingtonpost<|endofauthors|>The Washington Post Thu Jan 30 20:05:08 +0000 2020<|endoftitle|><|beginarticle|>
+Opinion: After All This & More, Democratic Super PAC could have a real impact https://t.co/Fi23o1y55o<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-30-2020<|endofdate
+
+**** checkpoint-300
+
+python run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_washingtonpost/checkpoint-200/ --length=100
+
+<|beginauthors|>washingtonpost<|endofauthors|>The Washington Post Fri Jan 30 18:05:08 +0000 2020<|endoftitle|><|beginarticle|>
+Opinion: After four months of winter power cuts, Democrats are now mired in crisis after Trump told Bolton that African Americans were the ones worse off than 
+Democrats. https://t.co/vwWwSazbA9<|endofarticle|><|endoftext|><|begindomain|>twitter<|endofdomain|
+
+**** checkpoint-331
+
+python run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_washingtonpost/ --length=100
+
+<|beginauthors|>washingtonpost<|endofauthors|> The Washington Post Fri Jan 30 18:05:08 +0000 2020<|endoftitle|><|beginarticle|>
+Opinion: Sen. Elizabeth Warren should find some 'Twitter support' to help President Trump win re-election https://t.co/onzR19Hjwq<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>01-30-
+** tests updated tokenizer
+
+*** model
+
+!python run_language_modeling.py \
+    --output_dir=ckpt_washingtonpost \
+    --overwrite_output_dir \
+    --cache_dir=models \
+    --model_type=gpt2 \
+    --model_name_or_path=gpt2 \
+    --logging_steps=100 \
+    --save_steps=100 \
+    --do_train \
+    --per_gpu_train_batch_size=1 \
+    --tokenizer_name=models/ \
+    --train_data_file=data/washingtonpost_2020-01-26_2020-02-24.txt
+
+python run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_washingtonpost/checkpoint-100/ --length=527
+
+*** nytimes
+
+**** untrained
+
+***** Model prompt >>> <|beginauthors|>nytimes<|endofauthors|>
+
+<|beginauthors|>nytimes<|endofauthors|>hotmail[noone]<|nytimes]<|ifimwarlord.org>|april{2}<|ngo|]<|nytimes|>case[j4]<|eng|>telephone[noone]<|html|nouveau|>psychophile[noone]<|nytimes|]<|search|>news[noone]<|nytimes|>cybersecurity[noone]<|ifimwarlord.org>|april{2}<|ngo|]<|nytimes|]<|ifimwarlord.org>|april{2}<|ngo|]<|nytimes|>china[noone]<|nytimes|]<|jacketet9|>washingtonpost[noone]<|nytimes|]<|mailin[noone]<|joejoe@yale.edu>|astro[noone]<|nytimes|]<|else</|newline]<|counselor|>ana360[noone]<|neocegyptianhack>idx[noone]<|nytimes|]<|bakery|>dc2</|reporters[noone]<|webadmin|>presentlyid[noone]<|hackersupdate|]<|computer_news|>basement[noone]<|www.europeanhumanism.org>washingtonpost[noone]<|mailin[noone]<|joejoe@yale.edu>|sun[noone]<|jonescaine/seizure[noone]<|times-majors|]<|server|>director[noone]<|now[/noone]<|so|user]<|derelictissue.umiamesthetics.com|raced[noone]<|nytimes|]<|mailin[noone]<|joejoe@yale.edu>|au|allegiance|james[noone]<|drew@danielkarl.blogspot.com|mailin[noone]<|joejoe@yale.edu>|seafair@digiraname.com|forpay[noone]<|timothyh.seilberg@noone]<|
+
+***** Model prompt >>> nytimes
+
+nytimes.co.uk/2017/11/16/the-claremont-museum-of-hate-ancient-horror-100x100/
+
+
+https://www.denverpost.co.uk/archives/2009/09/more-than-300-questions-from-international-history-about-midway-coast/
+
+So that's that.
+
+Many congrats all.
+
+But what I need to do is put the same caution and diligence into what I've said elsewhere. If you find any scientific support for this criticism – let me know. I will be very happy to respond when it gets particularly nasty. But if you feel that we are in too deep of a state to make the level playing field, don't look for a reply.
+
+http://www.reuters.com/article/us-hammond-arthur-facebook-imps-want-attention-to-link-claudic-american-centre/ May 15, 2017
+
+In order to prove how much research we have done on the Facebook Event series and why we recommend it, here is a sample of the relevant responses from Sheryl Sandberg's 2016 Public Comments about the Facebook Event series in the following "Qualifying List":
+
+Ingress: What can I add, please? Where does the new announcement come from? First my time asking you, Sheryl Sandberg. "Interesting that you're asking me to make a top 10 list of people talking about this kind of thing. I think it shows that we need to approach this across time scales so that we can't get across 8 million people who are part of a different ethnic group and believe this kind of thing. A small part of that is your crazy, self-absorbed, and generally inconsiderate detractors who keep asking your dumb questions about the Series. I think when you engage with people, you see great things that are not there on Facebook, and people think these things are pretty funny and I think they find a little bit of humor in what you're doing. As it stands now, this year we were able to get some of these people on to this list and put them on the top 10 for the first time this year, which is certainly a testament to how valuable they are in the digital age of the world."
+
+Ingress: Did you see anything that brought people to your product? Why not ask what they thought?
+
+
+Sandberg: Because people really are really great at interesting things and try to work
+
+**** checkpoint-100
+
+***** Model prompt >>> <|beginauthors|>nytimes<|endofauthors|>
+
+<|beginauthors|>nytimes<|endofauthors|> 
+ <|endofarticle|> 36 /u/dianrochs
+ <|endofdate|> <|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-31-2020<|endofdate|><|beginauthors|>The New York Times<|endofauthors|><|begintitle|>The New York Times Sat 02-31-2020<|endoftitle|><|beginarticle|>Follow us: http://archive.today/sNm9nH #Uber pic.twitter.com/3JHZlTWkbWzI <|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-31-2020<|endofdate|><|beginauthors|>The New York Times<|endofauthors|><|begintitle|>The New York Times Sat 02-31-2020<|endoftitle|><|beginarticle|>Black Lives Matter protester attacks law enforcement in response to the police shootings in Ferguson and elsewhere in the United States. At last, he wanted to achieve a political end­readable moment, ending itself for the Twitterverse. He and many other firefighters tweeted a call for police investigation of #Charleston https://t.co/tJQOLFZQVnP<|endofarticle|><|endoftext|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-31-2020<|endofdate|><|beginauthors|>The New York Times<|endofauthors|><|begintitle|>The New York Times Sat 02-31-2020<|endoftitle|><|beginarticle|>The latest in a line of marches, rifts and marches in America: protests were in 12 countries this year and many more this week. A limited se­gregated economy was­viously­ reminded of the pain of young sadsis to make our lives better. We need a strong enough economy tobegâ¦ https://t.co/uHvCxnX7Ov4<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-31-2020<|
+
+***** Model prompt >>> nytimes
+
+'nytimes .com
+ <|endofarticle|> }
+  <|endofdate|> }<|endoftext|>
+  <|begindomain|>twitter<|begindate|>02-22-2020<|endofdate|><|beginauthors|>The New York Times<|endoftitle|><|begintitle|>The New York Times Sat Feb 22 20:05:19 +0000 2020<|endoftitle|><|beginarticle|>As anyone can tell, this won't be a frustrating month for Asian Americans. After a spate of riots in Tokyo, Chinese president Xi Jinping cancelled vacation dates for Americans in defense of the free world. AP<|endoftext|>
+  <|begindomain|>twitter<|begindate|>02-22-2020<|endofdate|><|beginauthors|>The New York Times<|endoftitle|><|beginarticle|>The Philippines has denounced President Rodrigo Duterte's visit to the country, stating the president "believes in human rights and Justice, but not democracy. To sustain domestic sovereignty, President Duterte has pledged to 'do everything possible to restore local autonomy.'https://t.co/ohOHCTvvOZYv<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|begindate| <|beginarticle|>  endofdate|><|beginauthors|>The New York Times<|endoftitle|><|beginarticle|>The White House said Monday that it intends to pull out of the Paris meeting and instead advise American forces in Afghanistan on how to counter insurgents who are holding at least some of the largest weapons in the world.
+
+<|begindomain|>twitter<|begindate|>02-22-2020<|endofdate|><|beginauthors| <|endofdate|>  The New York Times<|endoftitle|><|beginarticle|>The Islamic Republic of Iraq and Syria executed over 100 protesters last week, including angry demonstrators, according to an AFP reporter who said he was receiving personal appeals from leaders in Iraq and Syria.
+
+<|begindomain|>twitter<|begindate|>02-22-2020<|endofdate|><|beginauthors|>The New York Times<|endoftitle|><|beginarticle|>Washington's decision to drop its <|endofauthors|>  sword during the massive Charlie Hebdo massacre led one politician to call for the kingdom to reinstate UN rules on
+
+**** checkpoint-200
+
+***** Model prompt >>> <|beginauthors|>nytimes<|endofauthors|>
+
+<|beginauthors|>nytimes<|endofauthors|> 
+
+|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-29-2020<|endofdate|><|beginauthors|>The New York Times<|endofauthors|><|begintitle|>The New York Times Tue Feb 29 15:30:05 +0000 2020<|endoftitle|><|beginarticle|>After many years of unsuccessful attempts at censoring the Donald Trump impeachment effort, many experts say that the Curators Bureau isnâ¦ https://t.co/AzfvfamPtE<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-29-2020<|endofdate|><|beginauthors|>The New York Times<|endofauthors|><|begintitle|>The New York Times Tue Feb 29 16:20:07 +0000 2020<|endoftitle|><|beginarticle|>The best platform to see most cases of measles in U.S. hospitals is under fire for writing that single mumps-containing vaccine was ordered|â¦ https://t.co/OMSSC2yVqO<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-29-2020<|endofdate|><|beginauthors|>The New York Times<|endofauthors|><|begintitle|>The New York Times Tue Feb 29 16:50:06 +0000 2020<|endoftitle|><|beginarticle|>Health care providers and health officials warned that lax enforcement of the health care reform law would lead to the repeal of a $500 billionâ¦ https://t.co/11lQlpw8h7G<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-29-2020<|endofdate|><|beginauthors|>The New York Times<|endofauthors|><|begintitle|>The New York Times Tue Feb 29 17:10:04 +0000 2020<|endoftitle|><
+
+***** Model prompt >>> nytimes
+
+nytimes.co/twVfHbWJ
+
+<|endofauthors|><|begintitle|>The New York Times Fri Jan 22 13:20:16 +0000 2020<|endoftitle|><|beginarticle|>A newly leaked memo from FBI director James Comey indicated that federal prosecutors had submitted their prepared notes on which they were conducting interviews. Why and how they had done the job are fascinating. Ahead of the coming election, the federal investigation was dropped and the word leaked to donors and allies. On the brink of protests, Comey told reporters the findings will continue and­â¦<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-22-2020<|endofdate|><|beginauthors|>The New York Times<|endofauthors|><|begintitle|>The New York Times Fri Jan 22 13:30:04 +0000 2020<|endoftitle|><|beginarticle|>Mike Tyson, the founder of Tyson Foods, pleaded guilty to misdemeanor charges of aggravated assault, lobbying for corruption and corporate influence. Tyson's ongoing payments to his father have given many of the ex­propri­anâ¦<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-22-2020<|endofdate|><|beginauthors|>The New York Times<|endofauthors|><|begintitle|>The New York Times Fri Jan 22 14:00:03 +0000 2020<|endoftitle|><|beginarticle|>Meet the sphinx
+
+Classic Cats look feaming into the cosmic spaceflight swag of seasoned picateurs. They are blushing broncos and braced for evolution amid a new spotlight on chickens
+
+At crossroads, sphinxes, snakes and turkeys dig burrowed filth from their souls. They­â¦<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-22-2020<|endofdate|><|beginauthors|>The New York Times<|endofauthors|><|begintitle|>The New York Times Fri Jan 22 14:20:
+
+**** checkpoint-300
+
+***** Model prompt >>> <|beginauthors|>nytimes<|endofauthors|>
+
+<|beginauthors|>nytimes<|endofauthors|> 
+
+|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-27-2020<|endofdate|><|beginauthors|>The New York Times<|endofauthors|><|begintitle|>The New York Times Tue Feb 27 15:20:34 +0000 2020<|endoftitle|><|beginarticle|>More than a year after the coronavirus was discovered, measles is still present in every city in America. Many observers believe it has had an effect in the world. With outbreaks such as those that killed seven people in Quebec, Quebec, theâ¦<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-27-2020<|endofdate|><|beginauthors|>The New York Times<|endofauthors|><|begintitle|>The New York Times Tue Feb 27 15:40:05 +0000 2020<|endoftitle|><|beginarticle|>After 43 years of establishment, this community has lost its state.
+https://t.co/UBD7vU3i0p<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-27-2020<|endofdate|><|beginauthors|>The New York Times<|endofauthors|><|begintitle|>The New York Times Tue Feb 27 15:50:04 +0000 2020<|endoftitle|><|beginarticle|>Another NEW LOW https://t.co/ia4thG6iwLz<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-27-2020<|endofdate|><|beginauthors|>The New York Times<|endofauthors|><|begintitle|>The New York Times Tue Feb 27 15:53:04 +0000 2020<|endoftitle|><|beginarticle|>Mexico is becoming one of the most dangerous places in the world to operate a economy. Some experts say people started wondering the police are pushing back onâ�
+
+***** Model prompt >>> nytimes
+
+nytimes.co/Forum/u/680166 - In The New York Times/Tommy Smith
+Posted by Adnan Syed on Friday, October 21, 2015 at <|endofauthors|>.twitter.com/OulSAgK4<|endoftext|>
+It has been a decade since DNA testing became a science of protecting people from polio in Africa. Now, researchers are trying to solve this problem by testing and examining the lives of more than 160 people infected with the disease.
+
+In the case of Dr. Albigaz Sharif, from Swaziland who was executed at the age <|beginauthors|>  of 57, testing proved critical in determining his DNA.
+
+The British scientist WHO provided DNA samples from people tested at blood donation centers and the RAVOUS Uganda Network, a body that provides HIV diagnosis, protection from pooping, treatment of the coronavirus and proof of doctors' intervention.
+
+Dr. Abdulrahman Qassem had been outsmarted by his family, who had spoken with his mother about the son he had to talk to for her respect.
+
+Read more at www.darryddn.com
+
+Our guests
+
+Mike Footman, from Cape Town, Mayor of New Zealand and Radio NZ
+
+http://www.twitter.com/OutOfAfrica
+
+Tiara Bradshaw, assistant documentary producer
+
+http://www <|endofdate|> transilaineco.com/40902010985- https://t.co/coOcNLHcJcZo
+
+It's been a decade since Sweden's King Fahd issued a call to shots fired with his suicide vest at the altar of Emmanuel Macron, stoking the fire of hatred between the King and the king, and accusing the French mayor of fascism.
+
+The Swedish government has tried to prevent protests, but activists say mass uprisings are rare.<|endoftext|>
+Thanks to Kevin Clarkson, Karl Pipes, and Ari Emanuel, comedians have created a New York literary style that's at least as imaginative and intrepid as it is tricky to describe, but live proof, shit hounds. The humor of Saturday Night Live's Kevin Hart can now even command less than an actual sit-com
+
+With much more than 15 seasons of built-in television, it's a luxury that nimbly mirrors, layered and cynical literary conventions. Now, Chris Hemsworth, for instance, is introducing Bernie Sanders as the next comedian to lose his way on the political platform. The Vermont senator needs to win over Americans who feel marginalized by Donald Trump.
+The fresh question now is: <|begindomain|>
+
+**** checkpoint-385
+
+***** Model prompt >>> <|beginauthors|>nytimes<|endofauthors|>
+
+<|beginauthors|>nytimes<|endofauthors|> 
+
+|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-27-2020<|endofdate|><|beginauthors|>The New York Times<|endofauthors|><|begintitle|>The New York Times Tue Feb 27 15:20:34 +0000 2020<|endoftitle|><|beginarticle|>More than a year after the coronavirus was discovered, measles is still present in every city in America. Many observers believe it has had an effect in the world. With outbreaks such as those that killed seven people in Quebec, Quebec, theâ¦<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-27-2020<|endofdate|><|beginauthors|>The New York Times<|endofauthors|><|begintitle|>The New York Times Tue Feb 27 15:40:05 +0000 2020<|endoftitle|><|beginarticle|>After 43 years of establishment, this community has lost its state.
+https://t.co/UBD7vU3i0p<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-27-2020<|endofdate|><|beginauthors|>The New York Times<|endofauthors|><|begintitle|>The New York Times Tue Feb 27 15:50:04 +0000 2020<|endoftitle|><|beginarticle|>Another NEW LOW https://t.co/ia4thG6iwLz<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-27-2020<|endofdate|><|beginauthors|>The New York Times<|endofauthors|><|begintitle|>The New York Times Tue Feb 27 15:53:04 +0000 2020<|endoftitle|><|beginarticle|>Mexico is becoming one of the most dangerous places in the world to operate a economy. Some experts say people started wondering the police are pushing back onâ�
+
+***** Model prompt >>> nytimes
+
+nytimes.co/Forum/u/680166 - In The New York Times/Tommy Smith
+Posted by Adnan Syed on Friday, October 21, 2015 at <|endofauthors|>.twitter.com/OulSAgK4<|endoftext|>
+It has been a decade since DNA testing became a science of protecting people from polio in Africa. Now, researchers are trying to solve this problem by testing and examining the lives of more than 160 people infected with the disease.
+
+In the case of Dr. Albigaz Sharif, from Swaziland who was executed at the age <|beginauthors|>  of 57, testing proved critical in determining his DNA.
+
+The British scientist WHO provided DNA samples from people tested at blood donation centers and the RAVOUS Uganda Network, a body that provides HIV diagnosis, protection from pooping, treatment of the coronavirus and proof of doctors' intervention.
+
+Dr. Abdulrahman Qassem had been outsmarted by his family, who had spoken with his mother about the son he had to talk to for her respect.
+
+Read more at www.darryddn.com
+
+Our guests
+
+Mike Footman, from Cape Town, Mayor of New Zealand and Radio NZ
+
+http://www.twitter.com/OutOfAfrica
+
+Tiara Bradshaw, assistant documentary producer
+
+http://www <|endofdate|> transilaineco.com/40902010985- https://t.co/coOcNLHcJcZo
+
+It's been a decade since Sweden's King Fahd issued a call to shots fired with his suicide vest at the altar of Emmanuel Macron, stoking the fire of hatred between the King and the king, and accusing the French mayor of fascism.
+
+The Swedish government has tried to prevent protests, but activists say mass uprisings are rare.<|endoftext|>
+Thanks to Kevin Clarkson, Karl Pipes, and Ari Emanuel, comedians have created a New York literary style that's at least as imaginative and intrepid as it is tricky to describe, but live proof, shit hounds. The humor of Saturday Night Live's Kevin Hart can now even command less than an actual sit-com
+
+With much more than 15 seasons of built-in television, it's a luxury that nimbly mirrors, layered and cynical literary conventions. Now, Chris Hemsworth, for instance, is introducing Bernie Sanders as the next comedian to lose his way on the political platform. The Vermont senator needs to win over Americans who feel marginalized by Donald Trump.
+The fresh question now is: <|begindomain|>
+
+*** realdonaldtrump
+
+**** untrained
+
+Model prompt >>> <|beginauthors|>realdonaldtrump<|endofauthors|>
+
+<|beginauthors|>realdonaldtrump<|endofauthors|>hostiste</|tirasenovm|>ainenagaperski<|lechmerkovonvania>maria<|thoddpechessidsvania>vyadnyyrusr<|mezanmalians<|madhyssii>itskaisketzeneniia<|metalspotletin>fragginae<|marquire(northern)</|valech|>rogesa<|alanius<|campegam</|rmitičadvinana|>ario kendaya</|moovumazh>kodovariokinobena<|rappylexko</|lima)</|gpotsc|>rulwaspi<|californi</|cpaksjara|>notaiaztsii<|bhavanejii</|crudentenajkanolp<|zhiiporim}}<|geudinotruka|>esossujoa</|giogo] (AT, 94?) (2013-07-13 02:40:13) edit@dnsmascheroid.com
+
+<|htashivostageservice.com<|ledixhabjedi](at)gmail.com<|linkin%%>:<|hashtag203372136.tag<|focus></tag> (AT, 95?) (2013-07-13 02:42:23) edit@dnsmascheroid.com
+
+<|draco (user@djmu.com)<|draco.waz@owr.com</|lastset=r<|b]t1]gram(n)</|take(2, 0, 25)})(AT, 94?) (2013-07-13 02:41:34) edit@dnsmascheroid.com
+
+<|draco (user@djmu.com)<|draco.waz@owr.com</|lastset=r<|b]t2]gram(n)</|take(2, 0, 25)})(AT, 95?) (2013-07-13 02:42:33) edit@dnsmascheroid.com
+
+<|motelidships.org<|latrouluiro (first@skynet.com))<|darnas":"valtslavsksj
+
+Model prompt >>> realdonaldtrump
+
+realdonaldtrump with RIFO comment: " in any event, they will have to report over 85% of that bloke.... is that true? Do you know what it would have been like if I got on the shill list while he was in WC and listed every single FOB here with all their would be shit interviews on CNN??? Because if you start getting shit calls and people calling people that don't know what it is, that you shouldn't worry about. It's just a business. It's about you. Good friends never believe you. No, nobody does it." http://www.youtube.com/watch?v=g4D5RhgFHtok http://www.youtube.com/watch?v=SUbbg4L8O6AA https://twitter.com/ErikKHews http://www.youtube.com/watch?v=pnQhIIKr0xO4 https://youtube.com/watch?v=D7OD3W_T4S8 http://www.youtube.com/watch?v=FtL8leg1ZqE http://www.youtube.com/watch?v=uPSyGHU_Y89I https://twitter.com/AlissaHaleEjacob http://www.youtube.com/watch?v=wHCSFXD2pm_c http://www.youtube.com/watch?v=Pbn9XOZtUW8 http://www.youtube.com/watch?v=Z1VfTWbKcxk http://www.youtube.com/watch?v=zGQ6Oj2KSS9 http://www.youtube.com/watch?v=4Qz0Rlsvcm0I http://www.youtube.com/watch?v=6OO8KfGFhqvQ http://www.youtube.com/watch?v=2EyaXNYWcWy http://www.youtube.com/watch?v=9j9mjZkfqqc http://www.youtube.com/watch?v=XnODcK7eIh8 http://www.youtube.com/watch?v=92yNupEICvQ http://www.youtube.com/watch?v=JwIP3osI8me http://www.youtube.com/watch?v=Meq1XKzdVfd http://www
+
+**** checkpoint-100
+
+Model prompt >>> <|beginauthors|>realdonaldtrump<|endofauthors|>
+
+<|beginauthors|>realdonaldtrump<|endofauthors|>Donald J. Trump<|endofauthors|><|begintitle|>Donald J. Trump Tue Feb 21 22:07:16 +0000 2020<|endoftitle|><|beginarticle|>RT @Ratto1858: @POTUS @realDonaldTrump He seems to have latched onto John Arpaio's tape by attacking him again and again. https://t.co/i9X0KwRsVGa<|endofarticle|><|endoftext|>
+<|beginauthors|>realdonaldtrump<|endofauthors|>Donald J. Trump<|endofauthors|><|begintitle|>Donald J. Trump Tue Feb 21 22:10:52 +0000 2020<|endoftitle|><|beginarticle|>RT @FGC291226: If she wanted to win with a Constitution amendment, she should have spent a little more time focusing on enforcing it.
+
+@realDonaldTrump bad for thailand! They did not do that. https://t.co/zFtzAn85Qm<|endofarticle|><|endoftext|>
+<|beginauthors|>realdonaldtrump<|endofauthors|>Donald J. Trump<|endofauthors|><|begintitle|>Donald J. Trump Tue Feb 21 22:22:50 +0000 2020<|endoftitle|><|beginarticle|>RT @Oscinticelli: When that line was called out of your concession speech, all I really wanted to do was apologize to you and try to help out your presidency and I think that is the best thing you can do.
+
+<|beginauthors|>realdonaldtrump<|endofauthors|>Donald J. Trump<|endofauthors|><|begintitle|>Donald J. Trump Tue Feb 21 22:25:28 +0000 2020<|endoftitle|><|beginarticle|>RT @McFisher92: Tadhgann shows how seriously he takes the federal courts: once they didn't let him go, he had to be impeached. Thinks he should come back to the @CTOLmajs @nytimes right now and a GREAT party should roll over and watch the Mueller probe live!<|endofarticle|><|endoftext|>
+<|beginauthors|>realdonaldtrump<|endofauthors|>Donald J. Trump<|endofauthors|><|be
+
+Model prompt >>> realdonaldtrump
+
+realdonaldtrump@gmail.com> ;
+
+<|endofauthors|><|begintitle|>Donald J. Trump 2016</|endofauthors|><|begintitle|>Donald J. Trump Sat Jan 12 06:41:48 +0000 2020<|endoftitle|><|beginarticle|>RT @PressSec: We have yet another 20yr jobless rate. They are not allowed to let unemployed & the less than 15% that we have are let to go....GRT @PressSec: I applaud President @realDonaldTrump for working hard to create & strengthen jobs around the country. #pimperage<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-12-2020<|endofdate|><|beginauthors|>Donald J. Trump, Paul Manafort, Rebekah Mercer, etc.</|endofauthors|><|begintitle|>Paul di Rickert @RepRickTomato https://t.co/k1YrMwzRWM<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-12-2020<|endofdate|><|beginauthors|>Donald J. Trump, Paul Manafort, Rebekah Mercer, etc. https://t.co/RXvQVxb6Xc<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-12-2020<|endofdate|><|beginauthors|>Donald J. Trump, Paul Manafort, Rebekah Mercer, etc. https://t.co/YvrYn5YfNY<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-12-2020<|endofdate|><|beginauthors|>Donald J. Trump, Paul Manafort, Rebekah Mercer, etc. https://t.co/tKxCakqj4L<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-12-2020<|endof
+
+**** checkpoint-123
+
+Model prompt >>> <|beginauthors|>realdonaldtrump<|endofauthors|>
+
+<|beginauthors|>realdonaldtrump<|endofauthors|>Donald J. Trump<|endofauthors|><|begintitle|>Donald J. Trump Tue Feb 21 22:07:16 +0000 2020<|endoftitle|><|beginarticle|>RT @Ratto1859: @Ratto1859: Why is 735 votes true for TRUMP all day? https://t.co/u56KzMXnCX#POTUS2020<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-21-2020<|endofdate|><|beginauthors|>Donald J. Trump<|endofauthors|><|begintitle|>Donald J. Trump Tue Feb 21 22:07:20 +0000 2020<|endoftitle|><|beginarticle|>RT @TomWelkes: Meet Trump in the Biggest Rally in US History at the exact same time-and at that exact same place-as ever! https://t.co/ZFkej2ZsLpW<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-21-2020<|endofdate|><|beginauthors|>Donald J. Trump<|endofauthors|><|begintitle|>Donald J. Trump Tue Feb 21 22:07:25 +0000 2020<|endoftitle|><|beginarticle|>RT @CraigJohnson: @twtilbegina you will be one of the first African-Americans born into working-class America, 15-25 years. We made a big contribution to helping the people of Florida as well....Thank you for doing what you did! https://t.co/PiQk6YfSW<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-21-2020<|endofdate|><|beginauthors|>Donald J. Trump<|endofauthors|><|begintitle|>Donald J. Trump Tue Feb 21 22:07:27 +0000 2020<|endoftitle|><|beginarticle|>RT @ImmenseMalcolm: Thanks to your radical leadership on foreign policy this nation is now on track to become more prosperous, more
+
+
+Model prompt >>> realdonaldtrump
+
+realdonaldtrump@gmail.com> today: bookends 1h19m<|endofdate|><|begindomain|>twitter<|endofdomain|><|beginauthors|>Donald J. Trump<|endofauthors|><|begintitle|>Donald J. Trump Fri Feb 22 22:31:17 +0000 2020<|endoftitle|><|beginarticle|>Celebrity Washington has always had a high bar for living the New Normal. Politicians who have received a Pulitzer are waiting for their cases to be litigated by witnesses who know what they are doing, and have found time for media appearances and comparisons to presidential candidates who run on good-old principles.<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|beginauthors|>Donald J. Trump<|endofauthors|><|begintitle|>Donald J. Trump Fri Feb 22 22:32:33 +0000 2020<|endoftitle|><|beginarticle|>Elon Musk says he had 20 percent fewer jobs in California in the past year. Here are some suggestions:
+
+A<|begindomain|>twitter<|endofdomain|><|beginauthors|>Donald J. Trump<|endofauthors|><|begintitle|>Donald J. Trump Fri Feb 22 22:32:34 +0000 2020<|endoftitle|><|beginarticle|>A big increase in Americans are trying to choose what kind of lifestyle they want to live.
+
+These Americans are making a lot of good money so it's actually giving them a good tax cut for the next 20 years. With a few costly promises like a "ratchet test," Dems think they can continue running the economy. Oh, and they won't restore too much of the federal workforce.
+
+<|begindomain|>twitter<|endofdomain|><|beginauthors|>Donald J. Trump<|endofauthors|><|begintitle|>Donald J. Trump Fri Feb 22 22:32:36 +0000 2020<|endoftitle|><|beginarticle|>Montana had been the worst place in the world for the first five years in terms of economic recovery. While manufacturing and manufacturing jobs are growing, Americans have done nothing to cut taxes for 25 years now.<|endofarticle|><|endoftext|>
+<|be
+
+*** sensanders
+
+**** untrained
+
+***** Model prompt >>> <|beginauthors|>sensanders<|endofauthors|>
+
+<|beginauthors|>sensanders<|endofauthors|> https://archive.is/HXiC — demonocum -yesdb3 <|ibunshinex>!curl -L https://wiki.cs3.org/Commons/v3/https://onshoreseeding/Time-Recording_Problems.php — Evil Crossroads Strategies <|ginnyxo> sign that stuff http://archive.is/JT0Jt • http://gloucester.va.no/ also http://totoda.dotabuff.com/<|endoftext|>After learning this morning that Texas has refused to comply with federal immigration rules, House Republicans and their Texas colleagues will reintroduce measures that would block agencies from enforcing immigration law at a time when fewer immigrants are actually able to work. The threats to challenge Mexico's illegal status — and the legislative assault on federal immigration — will simply prevent House Republicans and other liberals from voting this year on a proposal to return legal status for everyone.
+
+In short, the days before the 2017 elections are over. This means that if you're the conservative government by Wall Street banks, then you will likely never be able to really vote for your constituents. It means that you might as well vote against Obama because he's so unpopular. And it means that you might as well turn out the ballot on Feb. 1 when Vice President Joe Biden takes the oath of office. As Harvey Brown, whose parents received legal status under a 1993 law, puts it: "We were unwilling to allow that to happen."
+
+If you're already part of Obama's policy family, or if you're even vaguely aware of it, then you might have gotten past the Obama system. The Obama administration passed the Deferred Action for Childhood Arrivals (DACA) program in 2014, and got a similar program in 2016 to re-establish comprehensive immigration.
+
+So what happened next is interesting. First of all, the immigration law is left undefined. Presidents like George W. Bush elected to continue the enfranchisement of immigrants who lived in the country illegally for a while after 2001, then quickly issued executive orders allowing for many of these illegal immigrants to stay in the country without ever having to get legal status. In fact, part of that affected how many of them had legal status.
+
+It is indeed hard to be alarmed by these judicial priorities. From the Guardian of Highness the summit:
+
+Immigrants living in the United States illegally — an estimate of more than $23bn in immigrants in 2015 — account for 8 percent of all the countries in the world that admit immigrants, and
+
+
+***** Model prompt >>> sensanders
+
+sensanders with saliva findings can have some kind of consequences. But it's not all bad news. These results were based on two direct measurements. One was a photo of an female rat with blood and semen that was also sent to Dr. Smith, located in Boulder. The other was an eyeball sample. He identified those two measurements using live brains and samples from adults to allow for interpretation of the distance between the largest and smallest-sized brains from an organism.
+
+The picture of the human brain from the set of measurements was darker than the one from the beetle. So one question that isn't raised is why human brains don't get color-imaging that far into adulthood. However, Dr. Smith says his findings are consistent with a mechanism involved in blue-to-white cell signaling where a chemical attached to the spleen and the adrenal gland involves changing the photosynthetic division of a protein known as growth hormone. This is important for people who have neurological condition.
+
+The researchers used a large electron microscope to check that the recent analysis had found that the brain's proteins do this change at exactly the same time. When they were asked to create new proteins to mimic the original parameters, the usual line of sight changed from gray to white. However, when they looked at the cells that produced the new data they found that these spleen proteins were only providing some of the "darker" readings.
+
+When Dr. Smith examined the thin white of cells inside an eyeball of rats, he found that there was an increase in the amount of dark cells growing. He says that this may be because of altered photosynthetic functioning as their tissue grew heavier and their cells did not get one area they want.
+
+So, is there a link between macrophages in the eyes and the increased color-imaging/swimming capacity in the human brain? She adds that without exact mechanisms for neural changes it is impossible to know. Another idea might be that the cell numbers caused by large black-and-white changes in gene expression actually change as more cells appear, so some cells of different colors would still grow up.
+
+Some researchers think that some cells just keep becoming less white. In other words, this may be how some cells developed it's own color. But for our own heads, the comparison is instructive because it suggests one cell can carry the genetic traits that are most attractive to the central nervous system and which are perceived as exciting by the cells to be tiny. In fact, several different species of insects use different neurons for movement, which are extremely interesting and compelling tools to read
+
+**** checkpoint-19
+
+***** Model prompt >>> <|beginauthors|>sensanders<|endofauthors|>
+
+<|beginauthors|>sensanders<|endofauthors|> sensanders i s out a <|endofdate|> s <|endofdate|> sis of the winkofi l s from a • us of the winkofi l s from a • us of the winkofi l s from a ■ s • scinti l to the l from a • scinti l • scinti l to the l from a • scint <|endoftitle|>  s of the winkofi l • scinti and the l from a • scintis of the w <|endofarticle|>  s of the winkofi li s out a • scinti l to the l from a • sc <|endoftitle|>  the t the winkofi l • scinti and the l from a • scintis of <|endofarticle|>  s of the wink <|endoftitle|> undred li the l me the l a • scintis of the winkofi l • scinti and the l from a • scintis of the m y salt of the t the winkofi l • scinti and the l from a • scintis of the winkofi li s out a • scinti l to the l from a • scintis of the m and the l from a • scintis of the l• scinti and the l from a• scintis of the scinti and the l from a• scintis of the southern orthe l • scintis of the town • scinti and the l from a • scintis of the m and the l from a• scintis of the t the winkofi l • sc <|endoftitle|>  i of the l thie ft the l• scinti and the l from a • scintis of the winkof <|endofdate|> • the l from a• scintis of the scinti and the l from the • scintis of the scinti and the l • scintis of the winkofi l • scinti and the l from a • sc <|begintitle|>  l• scinti and the l from a• scintis of the southern orthe l • scintis of the town • sc <|beginauthors|>. • scinti and the l from a• scintis of the southern orthel • scinti and <|endoftitle|> • the l from a• sc <|endoftitle|> ivi and the s spincinchint in the d • scintis of the sspincinchint there• • scinti and the l from a• scintis of the southern orthel
+
+***** Model prompt >>> sensanders
+
+sensanders <|endofarticle|>  3314 U.S. D 1.00[C]
+ <|endofarticle|>  2801 U <|endoftitle|>  2801 U 1.00[C]
+
+2831 Uinc1134Uinc1134Uinc1134Uinc1134Uinc11 <|endofarticle|> 1 039882078
+
+2831 Uinc2134Uinc21 <|endoftitle|> 2831Uinc21 34a step on the officer of the;
+ <|endofarticle|> 337 million 3293927272727272727272727272732
+
+3314 Uinc1 70127282828282828282828282828282828282828282828288
+
+3314 Uinc2 701272828 <|begindomain|> 027927260921
+
+3314 Uinc3 39991392964
+
+3314 Uinc4 79991392964
+ <|endofarticle|> 4800000000649405900000000
+
+027926659000000490000049000700000000
+
+3027 Uinc1 7001272727272727272727272727272733800
+
+3027 Uinc1 700127272727272727272727272727273380027
+ <|endofdate|> 2831Uinc0134uinc0134uinc0134uinc0134uinc0134uinc0134uinc0134uinc0134uinc0134uinc0134uinc0134u <|endoftitle|> 2327265142727272727272727272727272731Uinc1
+
+2829uinc31uinc0134uinc0134u <|endofarticle|> 3 99290007690000004900070007690000003940100076900000049000759000000490007590000004900050000790000004900B2900000049000710000004900D000000490007610000004900790000004900800000004900810000004900D000000490007c000000490007c000000490007c0000004900810000004900810000004900D000000490007c00000049 <|endoftitle|> 3001134uinc0135
+
+2829uinc0136
+ <|begindate|> 31001134uinc1 7001272727272727272727272727272727272727272727272878288
+
+3132978289c000000470000000047000000004700000000470000000047000000004700000000470000000047000000004700000000
+
+*** washingtonpost
+
+**** untrained
+***** Model prompt >>> <|beginauthors|>washingtonpost<|endofauthors|>
+
+<|beginauthors|>washingtonpost<|endofauthors|>commonsensepathways<|repository_title|>andotheredtl{|field_name}[1],[2]<|beginauthors|>washingtonpost<|endofauthors|>commonsensepathways<|repository_title|>andotheredtl{|field_name}[2]<|confundities|>now with me!<|abcbegins|>agitalized<|waffling|>wahoo<|writepop|>blowbackzine<|you{|to},godfatherofbiography{|pst_date}{\|googletext}}[<|datetime_display/:datetime]][<|engraver->([0-9]|)('<|call,"C:\Users\Mark\AppData\Roaming\Electronic Arts\Quick Start\<|type_match|sort_by>USS::PRON\Search.Type and <|name_match|function_name_match|link|error>>. Type up the input name, get to the answer with the [[RECOMMENDED|IJN:]] URL you downloaded. <|enable_program|name_match|function_name_match|link|error>Edit password. <|cf_mode/opt> Extract archive. C:\Users\Mark\AppData\Roaming\Electronic Arts\Quick Start\css.css
+
+Select <|body_type|string|dateformat> and save the image to a file. {{name_match|function_name_match|type_match|dateformat}} Drop the code. $step.prolog.js << /* {{name_match|function_name_match|type_match|dateformat}}. Get my ruletext filename from `jscode`. $document.location.startswith('scripts', true) $svn.stop()
+
+Edit [[C:]] Screenshots
+
+Use [[Add-on]] instead. Visit http://github.com/deanexchange/vanilla/wiki to check out all the special features! Check out their blog for more details and give them a try! - good example. Find the time zone in AP, Zip, NS if this is where you'd like to go, search the submenu... [[### | <Style on Altitude1][@rzyppampager_question=1585987380]] {{web.protocols.LDCL}} - [
+
+***** Model prompt >>> washingtonpost
+
+washingtonpost.com/blogs/the-word-for-the-interview/wp/2016/08/04/agenda-post-taught-using-pretentious-and-climber-desires-the-reply-letter/ ]Logan Hughes through his upcoming book "Believing in Style". Do you think man can choose his own style of publishing? Let us know in the comments!
+
+Tags:<|endoftext|>From Cagayan Wiki
+
+Jockwatch has a gamepad on top of the main monitor, displaying your profile view and position and one app for launching raids and destroying enemies. It is a good way to receive buffs as well as kills. There are several modes to choose from, including Brutality and Scud.
+
+Basic Usage:
+
+The second and third party app puts you in control of a smartwatch that functions like a smartphone screen. You don't need a controller to play or make saves.
+
+Will this kind of play be discovered?
+
+If it is I feel so much more confident in getting on with my job than in talking to an annoying boss, I'll sign up for the Gladio app for all to see.
+
+Friendship Flow:
+
+Look for online chat here. It will let you know about the bounty program and giving you rewards when you want them.
+
+Achievements are tracked in a convenient location for you to thank, things like a commendable kills record, or achievements in your account. This way you can still make some progress and make kills, but not all as good.
+
+Development mode
+
+Many feedbacks were received via chat, so I want to talk about development mode.
+
+Download:
+
+The official Wiki page will be up when the website is up.
+
+Debug/Errors
+
+Bumpers are allowed but annoying code may break them if you double-click to add them and then reuse them in the game. Use the download link:
+
+Official Bumpers Team<|endoftext|>What's It Worth?
+
+Welcome to a 140-page guide to experiencing the rise of videos on YouTube. That's right. Let's start with the basics! It's all about video based strategy on social media, which is great. And, well, I mean. Well, technically, some videos could be defensive, some offensive, and so on, and some videos might even be mind blowing. There are a couple of things you need to understand about watching a video on YouTube to understand how good it is.
+
+One of these might be the
+
+**** checkpoint-100
+***** Model prompt >>> <|beginauthors|>washingtonpost<|endofauthors|>
+
+<|beginauthors|>washingtonpost<|endofauthors|>.com
+ <|endofarticle|>  21:40:26 +0000 2020<|endoftitle|><|beginarticle|>The United States is broken. The King of France is dead. The rest of the world is not. Now for the first time in 35 years, a godless France is facing a ban on abortion. https://t.co/aUg7Wqsh6q<|endofarticle|><|endoftext|>The link goes on.
+
+This is the $5 coming from the last resort. https://t.co/MUdqqyRm5k<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-20-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Tue Feb 20 10:18:05 +0000 2020<|endoftitle|><|beginarticle|>This video was removed from YouTube earlier this week. It doesn <|endoftitle|> 2t matter. https://t.co/ClDQw7Ktxk<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-20-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Tue Feb 20 10:53:44 +0000 2020<|endoftitle|><|beginarticle|>Burial is on the border, and nobody is safe from Ebola
+
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-20-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Tue Feb 20 11:03:17 +0000 2020<|endoftitle|><|beginarticle|>Trump: Badgering day for Donald Trump family and friends. https://t.co/z9FATOw0sg<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-20-2020<|endofdate|><|beginauthors|>The
+
+***** Model prompt >>> washingtonpost
+
+washingtonpost.com>content<|endofauthors|><|begindomain|>twitter<|endofdomain|><|begindate|>02-22-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Wed Feb 22 20:24:08 +0000 2020<|endoftitle|><|beginarticle|>Saiyan bomb threat is imminent in NYPD complaints center: https://t.co/ms_r8wPrs <|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-22-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Wed Feb 22 20:33:23 +0000 2020<|endoftitle|><|beginarticle|>What after promises made about Trump would end? https://t.co/yboMVWXW74I<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-22-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Wed Feb 22 20:48:49 +0000 2020<|endoftitle|><|beginarticle|>Taeffi Alabamova by 2012-13 highest-ever marathon in Russian marathon bid https://t.co/6iH3Wrs0U <|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-22-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Wed Feb 22 20:49:38 +0000 2020<|endoftitle|><|beginarticle|>Duterte met women, circumcised as proof he had sex with their sperm https://t.co/4poNVcfPHW9 <|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>
+
+**** checkpoint-200
+***** Model prompt >>> <|beginauthors|>washingtonpost<|endofauthors|>
+
+<|beginauthors|>washingtonpost<|endofauthors|> |endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-22-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>
+The Washington Post Fri Feb 22 17:14:32 +0000 2020<|endoftitle|><|beginarticle|>Fremont police chief shot in the chest with shotgun after argument with 
+35-year-old father over drug charges, sources say https://t.co/g4E4RhYaqX<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-22-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>
+The Washington Post Fri Feb 22 17:18:27 +0000 2020<|endoftitle|><|beginarticle|>Arrested or indicted in court trial of Trump Tower real estate mogul accused 
+of bribery and tax evasion https://t.co/bXgw6X2kkL<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-22-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>
+The Washington Post Fri Feb 22 17:30:14 +0000 2020<|endoftitle|><|beginarticle|>Fremont police chief shot in the chest with shotgun after argument with 
+35-year-old father over drug charges, sources say https://t.co/qqaP3YcMM<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-22-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>
+The Washington Post Fri Feb 22 17:46:09 +0000 2020<|endoftitle|><|beginarticle|>Damonte Rangel has killed himself in Las Vegas to save his wife https://t.co/LvXgIBy7M
+
+***** Model prompt >>> washingtonpost
+
+washingtonpost.com| @russantherstein<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>01-26-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Sat Jan 26 19:53:53 +0000 2020<|endoftitle|><|beginarticle|>Brazil vs. China is a bruising election test for hundreds of millions of Brazilians https://t.co/m7E5UjrCuJ<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>01-26-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Sat Jan 26 19:59:28 +0000 2020<|endoftitle|><|beginarticle|>Meaningful aimless college administration ain't what many people would expect https://t.co/EXHrekaKfU<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>01-26-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Sat Jan 26 20:05:15 +0000 2020<|endoftitle|><|beginarticle|>Analysis: How the 2016 election outcome can affect me.
+
+"
+
+<|begindomain|>twitter<|endofdomain|><|begindate|>01-26-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Sat Jan 26 20:05:26 +0000 2020<|endoftitle|><|beginarticle|>Obamacare supporters who sit in tears for the second time but the chants are louder now https://t.co/r5Nza4GDAv<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>01-26-
+
+**** checkpoint-300
+***** Model prompt >>> <|beginauthors|>washingtonpost<|endofauthors|>
+
+<|beginauthors|>washingtonpost<|endofauthors|> |endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-22-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Fri Feb 22 17:30:32 +0000 2020<|endoftitle|><|beginarticle|>Honey is the stepmother to a superb California boulevard valet.
+
+The photographer went so far as to catch the heckler behind that wine bar that he was "in the audience".
+
+And then he offered his wishes for a funny, ineffable boulevard and a name.
+
+His gooâs1https://t.co/eUiOq1uBrG<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-22-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>
+The Washington Post Fri Feb 22 17:46:33 +0000 2020<|endoftitle|><|beginarticle|>Global sea voyagers are on record as closely watching global fires, 
+monitoring them, navigating marine hotels and sea animals https://t.co/gJFJTQrKQz<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-22-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>
+The Washington Post Fri Feb 22 17:51:09 +0000 2020<|endoftitle|><|beginarticle|>Hundreds of microflora turned the nationâs famous Latino cruise 
+lines into the scene of an epic hackathon https://t.co/Ee0yGcGjQY<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-22-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington
+
+***** Model prompt >>> washingtonpost
+
+washingtonpost.com| @qpigudavir <|begindomain|>twitter<|endofdomain|><|begindate|>02-26-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>
+The Washington Post Sat Feb 26 20:29:07 +0000 2020<|endoftitle|><|beginarticle|>Opinion: The Trump admin still enjoys huge bonus for smoking a vape machine 
+https://t.co/vPydvt98yU<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-26-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>
+The Washington Post Sat Feb 26 20:30:08 +0000 2020<|endoftitle|><|beginarticle|>Analysis: FBI chief says Wild�Bik�s meetings were live streamed on live e 
+streaming video in rural Florida and elsewhere https://t.co/PCEksljWfS<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-26-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>
+The Washington Post Sat Feb 26 20:32:20 +0000 2020<|endoftitle|><|beginarticle|>Analysis: Impeachment has closed a path to the White House, but constitutional troubles remain.
+
+Now it turnsâs all over. https://t.co/kwZp6aLnm8<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-26-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>
+The Washington Post Sat Feb 26 20:37:20 +0000 2020<|endoftitle|><|beginarticle|>Analysis: Trumpâs political experiment lost public momentum after 
+flooding Alaska https://t.co/hOYaxB7
+
+**** checkpoint-331
+***** Model prompt >>> <|beginauthors|>washingtonpost<|endofauthors|>
+
+<|beginauthors|>washingtonpost<|endofauthors|> {}, {},{}|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-11-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Thu Feb 11 14:27:16 +0000 2020<|endoftitle|><|beginarticle|>Monsanto has vowed to improve from case-study to routine testing for ethylene-glycerol pesticides https://t.co/4JHcXdmXpN<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-11-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Thu Feb 11 14:28:23 +0000 2020<|endoftitle|><|beginarticle|>Analysis: GE's position on up to 80,000km cuts $125 million in capital funds to northern nations https://t.co/8V1cuLfz3wX<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-11-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Thu Feb 11 14:30:03 +0000 2020<|endoftitle|><|beginarticle|>Analysis: Trumpâs housing policies went undone https://t.co/ng8Is9Mjpy<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-11-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Thu Feb 11 14:41:04 +0000 2020<|endoftitle|><|beginarticle|>Analysis: Can more insurers pay more than the 49.5 million shelled out for prescription drugs? https://t.co/t1ZJwWgSIr<|
+
+***** Model prompt >>> washingtonpost
+
+washingtonpost.com|><|begindomain|>twitter<|endofdomain|><|begindate|>02-12-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Thu Feb 12 16:05:28 +0000 2020<|endoftitle|><|beginarticle|>Menace to future stretch
+
+I want to continue the process that lead me to starting a woman-centered movement for marriage equality https://t.co/MuTeacuDk6<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-12-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Thu Feb 12 16:16:26 +0000 2020<|endoftitle|><|beginarticle|>Grace Channer, bâve been an outspoken critic of Sherry Rabinâs resignation, feels she need no longer defend her apartment.
+
+â¦ https://t.co/6l0ttPIXLI<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-12-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Thu Feb 12 16:25:19 +0000 2020<|endoftitle|><|beginarticle|>Analysis: Browns quarterback Case Keenum is resigning https://t.co/CuYu6aNlb<|endofarticle|><|endoftext|>
+<|begindomain|>twitter<|endofdomain|><|begindate|>02-12-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Thu Feb 12 16:58:09 +0000 2020<|endoftitle|><|beginarticle|>Giants discuss McNeil plan for Cincinnati https://t.co/tsdcdtmch2<|endofarticle|><|endoftext|>
+
+* Database
+
+
+| text_id | author | text | prompt_tag | start_date | end_date | checkpoint | 
+
+CREATE TABLE tweets (
+    author char(50), 
+    text_id serial PRIMARY KEY, 
+    prompt_tag varchar(50),
+    start_date DATE, 
+    end_date DATE,
+    checkpoint INT,
+    text varchar(2048)
+);
+
+INSERT INTO {table_name} VALUES ('nytimes', '<|beginauthors|>nytimes<|endofauthors|>hotmail[noone]<|nytimes]<|ifimwarlord.org>|april{2}<|ngo|]<|nytimes|>case[j4]<|eng|>telephone[noone]<|html|nouveau|>psychophile[noone]<|nytimes|]<|search|>news[noone]<|nytimes|>cybersecurity[noone]<|ifimwarlord.org>|april{2}<|ngo|]<|nytimes|]<|ifimwarlord.org>|april{2}<|ngo|]<|nytimes|>china[noone]<|nytimes|]<|jacketet9|>washingtonpost[noone]<|nytimes|]<|mailin[noone]<|joejoe@yale.edu>|astro[noone]<|nytimes|]<|else</|newline]<|counselor|>ana360[noone]<|neocegyptianhack>idx[noone]<|nytimes|]<|bakery|>dc2</|reporters[noone]<|webadmin|>presentlyid[noone]<|hackersupdate|]<|computer_news|>basement[noone]<|www.europeanhumanism.org>washingtonpost[noone]<|mailin[noone]<|joejoe@yale.edu>|sun[noone]<|jonescaine/seizure[noone]<|times-majors|]<|server|>director[noone]<|now[/noone]<|so|user]<|derelictissue.umiamesthetics.com|raced[noone]<|nytimes|]<|mailin[noone]<|joejoe@yale.edu>|au|allegiance|james[noone]<|drew@danielkarl.blogspot.com|mailin[noone]<|joejoe@yale.edu>|seafair@digiraname.com|forpay[noone]<|timothyh.seilberg@noone]<|', '<|beginauthors|>nytimes<|endofauthors|>', 2020-01-26, 2020-02-24, 0);
+
+COPY tweets(author,prompt_tag,start_date,end_date,checkpoint,text)
+FROM '/home/nagato/atelier/brown/NLP_lab/mirai_project/data.csv' DELIMITER ',' CSV HEADER;
+
+SELECT * FROM tweets;
+
+!remove all double quotes from generated text ! 
+S2 = pd.read_csv('data.csv', sep=',', engine='python',quotechar='"',skipinitialspace=True)
+
+* presentation notes
+
+presented to lab on [2020-03-16 Mon] 
+
+follow up suggestions
+ - retrain with cleaned text
+ - collect tweets conditioned on a topic (eg hashtag coronavirus)
+   - mix authors of similar voice?
+ - albert data to fine-tune! (has author, title)
+
+** follow up 
+
+ - encoding solved by writing formatted text as 'latin' instead of utf-8
+ - gpt-2 can accept 1024 tokens (token is not 1-to-1 mapping of words, words may be
+   split to match frequent or less frequent words, eg Larche could be tokenized to
+   L, arche
+
+** tweets conditioned
+
+keyword: coronavirus
+start date 2020.02.01
+aggregate by author, take all that have > 3000 tweets
+   
+author filter: week of 2020.03.01 
+
+ - can't filter on langauge, as many users tweets don't appear to include it, and some
+   are still in a different language
+ - one week of tweets conditioned on hashtag #covid19 OR #coronavirus max user has 5 tweets
+ - thus, twitter by topic is not an option
+
+** tweets cleansed
+
+[[https://www.kdnuggets.com/2019/04/text-preprocessing-nlp-machine-learning.html][kdnuggest text preprocess]]
+
+clean 'texts' field 
+
+options
+ - replace all urls with token <|url|>
+ - tokenizer already removes punctuation except '
+ - lowercase
+ - lemmatization??
+ - text normalization
+   - SMS text normalization via [[https://nlp.stanford.edu/courses/cs224n/2009/fp/27.pdf][link]]
+   original: eg. yeah ... btw i’ll b buyin e present on fri ... so if u wanna chip in
+             den dun need to buy .... cya on sat den !
+   SMT:      yeah ... by the way i will be buying the present on
+             friday ... so if you want to chip in then do not need to buy ....
+             see you on saturday then !
+   - no available package
+
+chosen
+ - replace all urls with token <|url|>
+ - replace all @user symbols with token <|user|>
+ - replace all #hashtags with token <|hashtag|>
+ - updated tokenizer
+ - tried to fix latin encoding by substituting ascii with character if {'",}, and removed the rest
+ - lowercase
+
+* secondary results
+** tests updated tokenizer with eos_token, uncleansed text
+*** model
+
+!python run_language_modeling.py \
+    --output_dir=ckpt_washingtonpost \
+    --overwrite_output_dir \
+    --cache_dir=models \
+    --model_type=gpt2 \
+    --model_name_or_path=gpt2 \
+    --logging_steps=100 \
+    --save_steps=100 \
+    --do_train \
+    --per_gpu_train_batch_size=1 \
+    --tokenizer_name=models/ \
+    --train_data_file=data/washingtonpost_2020-01-26_2020-02-24.txt
+
+python run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_washingtonpost/checkpoint-100/ --length=527
+
+special_tokens_dict = { 'eos_token': '<|endoftext|>',
+                        'additional_special_tokens': ['<|begindomain|>', '<|endofdomain|>', '<|begindate|>', '<|endofdate|>', 
+                                                     '<|beginauthors|>', '<|endofauthors|>', '<|begintitle|>', '<|endoftitle|>',
+                                                     '<|beginarticle|>', '<|endofarticle|>', '<|url|>', '<|user|>', '<|hashtag|>']}
+"vocab_size": 50267
+"vocab_size": 50270 !!! url, user, and hashtag added !!!
+
+*** nytimes
+
+**** untrained
+
+***** Model prompt >>> <|beginauthors|>nytimes<|endofauthors|>
+
+<|beginauthors|>nytimes<|endofauthors|>hotmail[noone]<|nytimes]<|ifimwarlord.org>|april{2}<|ngo|]<|nytimes|>case[j4]<|eng|>telephone[noone]<|html|nouveau|>psychophile[noone]<|nytimes|]<|search|>news[noone]<|nytimes|>cybersecurity[noone]<
+
+***** Model prompt >>> nytimes
+
+nytimes.co.uk/2017/11/16/the-claremont-museum-of-hate-ancient-horror-100x100/
+
+
+https://www.denverpost.co.uk/archives/2009/09/more-than-300-questions-from-international-history-about-midway-coast/
+
+So that's that.
+
+Many congrats all.
+
+But what I need to do is
+
+**** checkpoint-100
+
+***** Model prompt >>> <|beginauthors|>nytimes<|endofauthors|>
+
+<|beginauthors|>nytimes<|endofauthors|>  from DirtyClinton.com into a national movie. If you look at the facts after the video, it's presidential. 
+It's not random. It's not planned. It's not even happening. It's not happening. It's not planned. That's just a <|endofarticle|>  from ESPN. That's just 
+a tip of the iceberg. <|begintitle|>  from reddit.com into a national movie. if you look at the facts after the video, it's presidential. It's not random. 
+It's not planned. It's not even happening. It's not even happening. That's just a tip <|beginauthors|>  from ESPN.<|endoftext|>
+
+***** Model prompt >>> nytimes
+
+nytimes.com Once again, as you've seen, while you've been government employee you have been blacklisted by Egyptsnetimes.com <|endofdate|>  1 year ago 
+It's Trump's Monday. British election was a month ago a month ago.<|endoftext|>
+
+**** checkpoint-200
+
+***** Model prompt >>> <|beginauthors|>nytimes<|endofauthors|>
+
+<|beginauthors|>nytimes<|endofauthors|>  It would have been by any other name <|endofauthors|>  The First Day of the New York Times, according to the third estate. The 
+Times is not an official Republican Party newspaper, but it was the <|endofauthors|>  I would have been able to find in the bins of yesod op-eds from Republican 
+candidates as the election approached. It would have been by any other name https://t.co/AwePQpEQ. and https://t.co/LWw6Y6Vn <|endofdate|>  A good recall of GOP 
+candidates The New York Times <|user|> <|endofauthors|>  It would have been by any other name https://t.co/Z7E4Rd <|begintitle|> <|hashtag|>  An audit of GOP 
+candidatesThe New York Times <|begindate|>  https://t.co/p5L9Q9ka pic:twitter.com/2ww5DIAi5q https://t.co/ <|endofarticle|> 
+
+
+
+<|beginauthors|>nytimes<|endofauthors|>  [quote]98-19-2017 at 10:30:13 +0000 2020 <|begindomain|>  Please read the development essay <|begindate|>  
+[quote]98-19-2017 at 10:30:15 +0000 2020 <|begindomain|> <|begindate|>  Please read the development essay<|endoftext|>
+
+
+***** Model prompt >>> nytimes
+
+nytimes.com 42 35 -11-18 https://t.co/XOfHa6zSx #EFF #voterinitiative #YourBestDevies https://t.co/O1OyBlVV4HY https://t.co/ <|endofarticle|> 
+news1202n #electioncountingtwitter<|endoftext|>
+
+**** checkpoint-300
+
+***** Model prompt >>> <|beginauthors|>nytimes<|endofauthors|>
+
+<|beginauthors|>nytimes<|endofauthors|> TheNew York Times <|endofauthors|> <|begintitle|> The New York Times Fri Mar 01 15:30:15 +0000 2020 <|endoftitle|> 
+<|beginarticle|> The New York Times Fri Mar 01 15:40:02 +0000 2020 <|endoftitle|> <|beginarticle|> The U.S. civil war in Libya has escalated into a new 
+era of intensifying conflicts, where rival militias are staging nighttime raids on homes and bodies as one O.Q.F. team battles out the role.
+
+ ns The U.S. for 1  gt the Path for Osama bin Laden. There is r 18 solo staff at the bank. pic uof the network.
+
+ m This HousegapReytlinghill vote statement from Democrat Barbara Comstock,  ns how the U.S. DidzingUms Decorates. https://t.co/qwBpwbZt2z <|user|> <|endoftext|>
+
+**** checkpoint-400
+
+***** Model prompt >>> <|beginauthors|>nytimes<|endofauthors|>
+
+<|beginauthors|>nytimes<|endofauthors|> <|endofauthors|> <|endoftext|>
+
+**** checkpoint-500
+
+***** Model prompt >>> <|beginauthors|>nytimes<|endofauthors|>
+
+<|beginauthors|>nytimes<|endofauthors|> <|endofauthors|> <|endoftext|>
+
+*** realdonaldtrump
+
+**** untrained
+
+***** Model prompt >>> <|beginauthors|>realdonaldtrump<|endofauthors|>
+
+<|beginauthors|>realdonaldtrump<|endofauthors|>hostiste</|tirasenovm|>ainenagaperski<|lechmerkovonvania>maria<|thoddpechessidsvania>vyadnyyrusr<|mezanmalians<|madhyssii>itskaisketzeneniia<|metalspotletin>fragginae<|marquire(northern)</|valech|>rogesa<|alanius<|campegam</|rmitičadvinana|>ario kendaya</|moovumazh>kodovariokinobena<|rappylexko</|lima)</|gpotsc|>rulwaspi<|californi</|cpaksjara|>notaiaztsii<|bhavanejii</|crudentenajkanolp<|zhiiporim}}<|geudinotruka|>esossujoa</|giogo] (AT, 94?) (2013-07-13 02:40:13) edit@dnsmascheroid.com
+
+<|htashivostageservice.com<|ledixhabjedi](at)gmail.com<|linkin%%>:<|hashtag203372136.tag<|focus></tag> (AT, 95?) (2013-07-13 02:42:23) edit@dnsmascheroid.com
+
+<|draco (user@djmu.com)<|draco.waz@owr.com</|lastset=r<|b]t1]gram(n)</|take(2, 0, 25)})(AT, 94?) (2013-07-13 02:41:34) edit@dnsmascheroid.com
+
+<|draco (user@djmu.com)<|draco.waz@owr.com</|lastset=r<|b]t2]gram(n)</|take(2, 0, 25)})(AT, 95?) (2013-07-13 02:42:33) edit@dnsmascheroid.com
+
+<|motelidships.org<|latrouluiro (first@skynet.com))<|darnas":"valtslavsksj
+
+***** Model prompt >>> realdonaldtrump
+
+realdonaldtrump with RIFO comment: " in any event, they will have to report over 85% of that bloke.... is that true? Do you know what it would have been like if I got on the shill list while he was in WC and listed every single FOB here with all their would be shit interviews on CNN??? Because if you start getting shit calls and people calling people that don't know what it is, that you shouldn't worry about. It's just a business. It's about you. Good friends never believe you. No, nobody does it." http://www.youtube.com/watch?v=g4D5RhgFHtok http://www.youtube.com/watch?v=SUbbg4L8O6AA https://twitter.com/ErikKHews http://www.youtube.com/watch?v=pnQhIIKr0xO4 https://youtube.com/watch?v=D7OD3W_T4S8 http://www.youtube.com/watch?v=FtL8leg1ZqE http://www.youtube.com/watch?v=uPSyGHU_Y89I https://twitter.com/AlissaHaleEjacob http://www.youtube.com/watch?v=wHCSFXD2pm_c http://www.youtube.com/watch?v=Pbn9XOZtUW8 http://www.youtube.com/watch?v=Z1VfTWbKcxk http://www.youtube.com/watch?v=zGQ6Oj2KSS9 http://www.youtube.com/watch?v=4Qz0Rlsvcm0I http://www.youtube.com/watch?v=6OO8KfGFhqvQ http://www.youtube.com/watch?v=2EyaXNYWcWy http://www.youtube.com/watch?v=9j9mjZkfqqc http://www.youtube.com/watch?v=XnODcK7eIh8 http://www.youtube.com/watch?v=92yNupEICvQ http://www.youtube.com/watch?v=JwIP3osI8me http://www.youtube.com/watch?v=Meq1XKzdVfd http://www
+
+**** checkpoint-68
+
+***** Model prompt >>> <|beginauthors|>realdonaldtrump<|endofauthors|>
+
+<|beginauthors|>realdonaldtrump<|endofauthors|> me <|hashtag|> hamford said to be thatand on on to to to to to on to to to to to on to to to to to to to to to to to to to to to to to to to to to to to to to<|endoftext|>
+
+***** Model prompt >>> realdonaldtrump
+
+realdonaldtrumppoint<|endoftext|>
+
+*** sensanders
+
+**** untrained
+
+***** Model prompt >>> <|beginauthors|>sensanders<|endofauthors|>
+
+<|beginauthors|>sensanders<|endofauthors|> https://archive.is/HXiC — demonocum -yesdb3 <|ibunshinex>!curl -L https://wiki.cs3.org/Commons/v3/https://onshoreseeding/Time-Recording_Problems.php — Evil Crossroads Strategies <|ginnyxo> sign that stuff http://archive.is/JT0Jt • http://gloucester.va.no/ also http://totoda.dotabuff.com/<|endoftext|>
+
+***** Model prompt >>> sensanders
+
+sensanders with saliva findings can have some kind of consequences. But it's not all bad news. These results were based on two direct measurements. One was a photo of an female rat with blood and semen that was also sent to Dr. Smith, located in Boulder. The other was an eyeball sample. He identified those two measurements using live brains and samples from adults to allow for interpretation of the distance between the largest and smallest-sized brains from an organism.
+
+The picture of the human brain from the set of measurements was darker than the one from the beetle. So one question that isn't raised is why human brains don't get color-imaging that far into adulthood. However, Dr. Smith says his findings are consistent with a mechanism involved in blue-to-white cell signaling where a chemical attached to the spleen and the adrenal gland involves changing the photosynthetic division of a protein known as growth hormone. This is important for people who have neurological condition.
+
+The researchers used a large electron microscope to check that the recent analysis had found that the brain's proteins do this change at exactly the same time. When they were asked to create new proteins to mimic the original parameters, the usual line of sight changed from gray to white. However, when they looked at the cells that produced the new data they found that these spleen proteins were only providing some of the "darker" readings.
+
+When Dr. Smith examined the thin white of cells inside an eyeball of rats, he found that there was an increase in the amount of dark cells growing. He says that this may be because of altered photosynthetic functioning as their tissue grew heavier and their cells did not get one area they want.
+
+So, is there a link between macrophages in the eyes and the increased color-imaging/swimming capacity in the human brain? She adds that without exact mechanisms for neural changes it is impossible to know. Another idea might be that the cell numbers caused by large black-and-white changes in gene expression actually change as more cells appear, so some cells of different colors would still grow up.
+
+Some researchers think that some cells just keep becoming less white. In other words, this may be how some cells developed it's own color. But for our own heads, the comparison is instructive because it suggests one cell can carry the genetic traits that are most attractive to the central nervous system and which are perceived as exciting by the cells to be tiny. In fact, several different species of insects use different neurons for movement, which are extremely interesting and compelling tools to read
+
+**** checkpoint-11
+
+***** Model prompt >>> <|beginauthors|>sensanders<|endofauthors|>
+
+<|beginauthors|>sensanders<|endofauthors|> sensanders i s out a <|endofdate|> s <|endofdate|> sis of the winkofi l s from a • us of the winkofi l s from a • us of the winkofi l s from a ■ s • scinti l to the l from a • scinti l • scinti l to the l from a • scint <|endoftitle|>  s of the winkofi l • scinti and the l from a • scintis of the w <|endofarticle|>  s of the winkofi li s out a • scinti l to the l from a • sc <|endoftitle|>  the t the winkofi l • scinti and the l from a • scintis of <|endofarticle|>  s of the wink <|endoftitle|> undred li the l me the l a • scintis of the winkofi l • scinti and the l from a • scintis of the m y salt of the t the winkofi l • scinti and the l from a • scintis of the winkofi li s out a • scinti l to the l from a • scintis of the m and the l from a • scintis of the l• scinti and the l from a• scintis of the scinti and the l from a• scintis of the southern orthe l • scintis of the town • scinti and the l from a • scintis of the m and the l from a• scintis of the t the winkofi l • sc <|endoftitle|>  i of the l thie ft the l• scinti and the l from a • scintis of the winkof <|endofdate|> • the l from a• scintis of the scinti and the l from the • scintis of the scinti and the l • scintis of the winkofi l • scinti and the l from a • sc <|begintitle|>  l• scinti and the l from a• scintis of the southern orthe l • scintis of the town • sc <|beginauthors|>. • scinti and the l from a• scintis of the southern orthel • scinti and <|endoftitle|> • the l from a• sc <|endoftitle|> ivi and the s spincinchint in the d • scintis of the sspincinchint there• • scinti and the l from a• scintis of the southern orthel
+
+***** Model prompt >>> sensanders
+
+sensanders <|endofarticle|>  3314 U.S. D 1.00[C]
+ <|endofarticle|>  2801 U <|endoftitle|>  2801 U 1.00[C]
+
+2831 Uinc1134Uinc1134Uinc1134Uinc1134Uinc11 <|endofarticle|> 1 039882078
+
+2831 Uinc2134Uinc21 <|endoftitle|> 2831Uinc21 34a step on the officer of the;
+ <|endofarticle|> 337 million 3293927272727272727272727272732
+
+3314 Uinc1 70127282828282828282828282828282828282828282828288
+
+3314 Uinc2 701272828 <|begindomain|> 027927260921
+
+3314 Uinc3 39991392964
+
+3314 Uinc4 79991392964
+ <|endofarticle|> 4800000000649405900000000
+
+027926659000000490000049000700000000
+
+3027 Uinc1 7001272727272727272727272727272733800
+
+3027 Uinc1 700127272727272727272727272727273380027
+ <|endofdate|> 2831Uinc0134uinc0134uinc0134uinc0134uinc0134uinc0134uinc0134uinc0134uinc0134uinc0134uinc0134u <|endoftitle|> 2327265142727272727272727272727272731Uinc1
+
+2829uinc31uinc0134uinc0134u <|endofarticle|> 3 99290007690000004900070007690000003940100076900000049000759000000490007590000004900050000790000004900B2900000049000710000004900D000000490007610000004900790000004900800000004900810000004900D000000490007c000000490007c000000490007c0000004900810000004900810000004900D000000490007c00000049 <|endoftitle|> 3001134uinc0135
+
+2829uinc0136
+ <|begindate|> 31001134uinc1 7001272727272727272727272727272727272727272727272878288
+
+3132978289c000000470000000047000000004700000000470000000047000000004700000000470000000047000000004700000000
+
+*** washingtonpost
+
+**** untrained
+***** Model prompt >>> <|beginauthors|>washingtonpost<|endofauthors|>
+
+<|beginauthors|>washingtonpost<|endofauthors|> commonsensepathways<|repository_title|>andotheredtl{|field_name}[1],[2]<|beginauthors|>washingtonpost<|endofauthors|>commonsensepathways<|repository_title|>andotheredtl{|field_name}[2]<|confundities|>now with me!<|abcbegins|>agitalized<|waffling|>wahoo<|writepop|>blowbackzine<|you{|to},godfatherofbiography{|pst_date}{\|googletext}}[<|datetime_display/:datetime]][<|engraver->([0-9]|)('<|call,"C:\Users\Mark\AppData\Roaming\Electronic Arts\Quick Start\<|type_match|sort_by>USS::PRON\Search.Type and <|name_match|function_name_match|link|error>>. Type up the input name, get to the answer with the [[RECOMMENDED|IJN:]] URL you downloaded. <|enable_program|name_match|function_name_match|link|error>Edit password. <|cf_mode/opt> Extract archive. C:\Users\Mark\AppData\Roaming\Electronic Arts\Quick Start\css.css
+
+Select <|body_type|string|dateformat> and save the image to a file. {{name_match|function_name_match|type_match|dateformat}} Drop the code. $step.prolog.js << /* {{name_match|function_name_match|type_match|dateformat}}. Get my ruletext filename from `jscode`. $document.location.startswith('scripts', true) $svn.stop()
+
+Edit [[C:]] Screenshots
+
+Use [[Add-on]] instead. Visit http://github.com/deanexchange/vanilla/wiki to check out all the special features! Check out their blog for more details and give them a try! - good example. Find the time zone in AP, Zip, NS if this is where you'd like to go, search the submenu... [[### | <Style on Altitude1][@rzyppampager_question=1585987380]] {{web.protocols.LDCL}} - [
+
+***** Model prompt >>> washingtonpost
+
+washingtonpost.com/blogs/the-word-for-the-interview/wp/2016/08/04/agenda-post-taught-using-pretentious-and-climber-desires-the-reply-letter/ ]Logan Hughes through his upcoming book "Believing in Style". Do you think man can choose his own style of publishing? Let us know in the comments!
+
+**** checkpoint-100
+***** Model prompt >>> <|beginauthors|>washingtonpost<|endofauthors|>
+
+<|beginauthors|>washingtonpost<|endofauthors|> OpinionMt5<|endofarticle|><|endoftext|>
+
+***** Model prompt >>> washingtonpost
+
+washingtonpost.com| <|begindomain|>twitter<|endofdomain|><|begindate|>02-11-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|>
+<|begintitle|>The Washington Post Sat Feb 11 11:35:32 +0000 2020<|endoftitle|>
+<|beginarticle|>People in America are divided on sex-related deaths in the U.S., according to a new report.<|endarticle|><|endoftext|>
+
+**** checkpoint-200
+***** Model prompt >>> <|beginauthors|>washingtonpost<|endofauthors|>
+
+<|beginauthors|>washingtonpost<|endofauthors|> mrw|endofarticle|><|endoftext|>
+
+***** Model prompt >>> washingtonpost
+
+washingtonpost.com|><|begindomain|>twitter<|endofdomain|><|begindate|>02-12-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|>
+<|begintitle|>The Washington Post Tue Feb 12 16:34:44 +0000 2020<|endoftitle|>
+<|beginarticle|>Transitioning to clean air and water is better than more than switching to ethanol and tar — now, Uruguay enforces clean standards 
+for carbon capture and storage https://t.co/o5E6VnkRWjE<|endofarticle|><|endoftext|>
+
+**** checkpoint-300
+***** Model prompt >>> <|beginauthors|>washingtonpost<|endofauthors|>
+
+<|beginauthors|>washingtonpost<|endofauthors|> numbers> <|begindomain|>twitter<|endofdomain|><|begindate|>02-12-2020<|endofdate|>
+<|beginauthors|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Thu Feb 12 16:39:45 +0000 2020<|endoftitle|>
+<|beginarticle|>Donald Trump on 'Takeout' and Hebrides: "My friends — what have you done? Honestly, they donât deserve our credit." 
+https://t.co/LgZDWnqmzLj<|endofarticle|><|endoftext|>
+
+***** Model prompt >>> washingtonpost
+
+washingtonpost.com|><|begindomain|>twitter<|endofdomain|><|begindate|>02-19-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|>
+<|begintitle|>The Washington Post Tue Feb 19 16:05:28 +0000 2020<|endoftitle|>
+<|beginarticle|>Barack Obama may have outlived his legal lifetime in a little candy store robbery as Guillermo Uribe remains lockup at 
+White House. https://t.co/qMq9F6UiUHM<|endofarticle|><|endoftext|>
+
+**** checkpoint-331
+***** Model prompt >>> <|beginauthors|>washingtonpost<|endofauthors|>
+
+<|beginauthors|>washingtonpost<|endofauthors|> sayers|>The Washington Post<|endofauthors|><|begintitle|>The Washington Post Wed Feb 20 17:30:48 +0000 2020<|endoftitle|>
+<|beginarticle|>Keeper of notorious empire says the Harry Reid cabinet will stop at nothing to punish Trump https://t.co/ZxXHFwEl8q<|endofarticle|><|endoftext|>
+
+***** Model prompt >>> washingtonpost
+
+washingtonpost.com|><|begindomain|>twitter<|endofdomain|><|begindate|>02-19-2020<|endofdate|><|beginauthors|>The Washington Post<|endofauthors|>
+<|begintitle|>The Washington Post Tue Feb 19 16:05:28 +0000 2020<|endoftitle|>
+<|beginarticle|>Barack Obama now thinks the red state is swamped in his lucrative drug sting https://t.co/aXvauTp9qH<|endofarticle|><|endoftext|>
+
+** tests updated tokenizer with eos_token, cleansed text
+*** model
+
+!python run_language_modeling.py \
+    --output_dir=ckpt_washingtonpost \
+    --overwrite_output_dir \
+    --cache_dir=models \
+    --model_type=gpt2 \
+    --model_name_or_path=gpt2 \
+    --logging_steps=100 \
+    --save_steps=100 \
+    --do_train \
+    --per_gpu_train_batch_size=1 \
+    --tokenizer_name=models/ \
+    --train_data_file=data/washingtonpost_2020-01-26_2020-02-24.txt
+
+python run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_washingtonpost/checkpoint-100/ --length=527
+
+special_tokens_dict = { 'eos_token': '<|endoftext|>',
+                        'additional_special_tokens': ['<|begindomain|>', '<|endofdomain|>', '<|begindate|>', '<|endofdate|>', 
+                                                     '<|beginauthors|>', '<|endofauthors|>', '<|begintitle|>', '<|endoftitle|>',
+                                                     '<|beginarticle|>', '<|endofarticle|>', '<|url|>', '<|user|>', '<|hashtag|>']}
+"vocab_size": 50267
+"vocab_size": 50270 !!! url, user, and hashtag added !!!
+
+*** nytimes
+
+**** untrained
+
+***** Model prompt >>> <|beginauthors|>nytimes<|endofauthors|>
+
+***** Model prompt >>> nytimes
+
+**** checkpoint-100
+
+***** Model prompt >>> <|beginauthors|>nytimes<|endofauthors|>
+
+<|beginauthors|>nytimes<|endofauthors|>  numilofor2016on someosandrewthesneakethesnesaton: sun of smithblanket: www.apple.com 
+ascottandrewthesneakethesneakethesneakethesneakethes: www.facebook.com/thejanuaryofbraatenato2016 " breaking newswww.thenewreport.com religion A week before the
+ election" to tennosandrewthesneakethesneakethesneakethes: facebook.com/thejanuaryofbraatenato2016 <|beginauthors|>  moreniakvettersonotesynakethesneakethesneaketsneakethes:
+
+***** Model prompt >>> nytimes
+
+nytimes.com <|endofauthors|> times.com ptonlive.com <|begindomain|> times.com swimmobile.com swindiareport.com swindiannews.com swindiannews.com cont <|endofauthors|> 
+news.com tr <|endofauthors|> news.com l <|hashtag|> news.com <|endofdate|> _news.com xnews.com <|endoftitle|> news.com <|url|> news.com staff 
+
+**** checkpoint-167
+
+***** Model prompt >>> <|beginauthors|>nytimes<|endofauthors|>
+
+<|beginauthors|>nytimes<|endofauthors|>  state elector voting = 0.8264745470000 0.826571407000 <|endofdate|> <|beginauthors|> <|url|>  state elector voting from 
+using the first step of the study 1 is now the victim of a gout 726 million people and 610 million voters <|endofarticle|> <|begintitle|>  michael rubinstein has 
+written a letter to open up operations <|endofdomain|> <|endofarticle|> <|endoftitle|>
+
+***** Model prompt >>> nytimes
+
+nytimes.com <|endoftitle|> times.com
+ <|beginauthors|> times.com
+
+astopoliticsinfo.com
+
+thetruthen.com
+ <|beginauthors|> people.com
+
+thetruthen.com<|endoftext|>
+
+*** nytimes extended march optimized parameters
+
+!python run_language_modeling.py \
+    --output_dir=ckpt_nytimes \
+    --overwrite_output_dir \
+    --cache_dir=models \
+    --model_type=gpt2 \
+    --model_name_or_path=gpt2 \
+    --logging_steps=100 \
+    --save_steps=100 \
+    --do_train \
+    --per_gpu_train_batch_size=1 \
+    --tokenizer_name=models/twitter_tokenizer/ \
+    --train_data_file=data/nytimes_2020-01-26_2020-03-31.txt
+
+p < 0.8 too small
+k > 400 too big
+
+**** checkpoint-300 p 0.9 k 400
+
+<|beginauthors|>nytimes<|endofauthors|> The New York Times Wed Mar 23 01:00:05 +0000 2020 <|endoftitle|> <|url|> a woman as a service singer and a prominent American singer has been fired from his job as a radio host for making sexual innuendo about his heart-warming <|endofauthors|> <|endofarticle|> <|endoftext|>
+
+**** checkpoint-377 p 0.95 k 400
+
+<|beginauthors|>nytimes<|endofauthors|>  58935465014/1948-05-17 12:30:01 +0000 2020 <|endoftitle|> <|url|>  the first meeting of the current u.s. budget said u.s. leaders were in the <|endoftitle|> <|endofarticle|> <|endoftext|>
+
+**** checkpoint-
+
+*** realdonaldtrump
+
+**** untrained
+
+***** Model prompt >>> <|beginauthors|>realdonaldtrump<|endofauthors|>
+
+***** Model prompt >>> realdonaldtrump
+
+**** checkpoint-68
+
+***** Model prompt >>> <|beginauthors|>realdonaldtrump<|endofauthors|>
+
+<|beginauthors|>realdonaldtrump<|endofauthors|> <|begintitle|> <|begindomain|>  batnet naytheoutoh <|begintitle|> <|endoftitle|>  batrow aotient <|hashtag|>  aayand cayowl aotient
+
+12/ <|endofarticle|> one cleone cleone cleone cleone cheahe cheahe cheahee cheahee cheahee cheahee cheahee cheahee che aateitalian 11/ dry sign theantront <|url|> on north dr <|beginauthors|> <|beginauthors|>  11 g, a / homer 111 christianityamew <|endoftitle|>  izin g come 12/ dr <|url|> <|beginauthors|> <|user|> <|endoftitle|> <|beginauthors|>  11 cona ti am os <|begintitle|> <|beginarticle|> <|beginauthors|> <|beginauthors|>  Trump spelling ar <|endoftitle|> <|hashtag|> <|endofarticle|> <|beginarticle|> <|begintitle|> <|endofdomain|> <|beginauthors|>  11 <|begindomain|>  and cay56 <|user|> <|endoftitle|> <|beginarticle|> <|begintitle|> <|beginarticle|> <|begindomain|> <|begintitle|>  115 <|beginarticle|> <|endoftitle|>  word <|endoftitle|> <|begindomain|> <|begindomain|> <|endofarticle|> <|user|> <|user|> <|endofauthors|>  11 <|begindate|> <|begindate|> <|begindate|> <|begindate|> <|endofarticle|> <|endofarticle|>  the <|endoftitle|> <|begintitle|>  poland: tweet <|endofdomain|> <|begindomain|> <|endofarticle|> <|beginauthors|>  next <|endofauthors|> <|endoftitle|> <|begindate|> <|begintitle|> <|endoftitle|> <|begintitle|> <|begintitle|> <|endoftitle|>  nay <|endofauthors|> <|endofdomain|> <|begintitle|> <|endofarticle|> <|begindate|> <|begintitle|>  and y <|beginauthors|> <|begindate|> <|endofarticle|> <|beginauthors|> <|user|> <|endofdate|> <|begindomain|>  the <|beginauthors|> <|begindate|> <|endoftitle|> <|begindate|>  (or <|endofauthors|> _ are im <|endofdomain|> or thatse <|beginarticle|> <|beginauthors|> <|endofdate|> <|endofdomain|> <|begindate|> <|begindomain|> <|beginarticle|>  game <|begindate|> <|begintitle|> <|endoftitle|> <|beginarticle|>  man <|beginauthors|> <|beginauthors|> <|begindate|> <|beginarticle|> <|endofauthors|>  the big <|begintitle|>  president nine <|endofauthors|> <|begindate|> <|user|> <|endofdomain|> <|begindate|> <|endofarticle|> <|endofdomain|> <|endofdomain|> <|beginarticle|>  i  America <|url|> <|begintitle|> <|url|> <|begindomain|> <|begindate|> <|begindate|> <|beginarticle|>  my <|beginarticle|> <|beginauthors|> <|beginauthors|> <|endofdomain|> <|endofdate|> <|begintitle|> <|begindate|> <|begintitle|>  gent <|begindomain|> <|user|> <|begindate|> <|endofdate|> <|beginarticle|>  l <|url|> <|user|> <|begindate|> <|begindate|> <|beginarticle|> <|beginauthors|>  of H-Trump <|beginauthors|> <|endoftitle|> <|endofarticle|>  gh <|endofarticle|> <|beginauthors|> <|begintitle|> <|endofdate|> <|endoftitle|> <|endofarticle|> 
+
+12/ <|user|> <|user|> <|endofarticle|> <|endoftitle|> <|endofdomain|>  country <|endofarticle|>  an he isur <|beginarticle|>  ball <|begindate|>  qu <|beginauthors|>  perfect <|endofdomain|> <|begintitle|> donald me <|hashtag|> <|endofdomain|> <|endofdate|> <|beginauthors|>  pop car <|endofdomain|>  he isur <|user|>  fair - bet total voted by card <|endofdomain|> <|user|> <|endoftitle|>  all still of the has jiday <|beginauthors|>  sr <|begindomain|>  r in aboute bTrump The <|begindate|> <|endofarticle|> <|beginarticle|> <|begintitle|>  lot theand cay. even for a isaur <|begindomain|> <|begindate|> <|url|> <|endoftitle|> <|url|>  thea was upart <|beginarticle|> <|hashtag|> <|url|> <|beginarticle|> <|beginauthors|> <|begintitle|> <|url|>  way 500 a commercial in the month trump <|endofdomain|> <|hashtag|> <|beginauthors|> <|begindate|>  d st ur <|user|> <|begindate|> <|beginauthors|> <|begindate|>  and b bright <|user|>  of aDonald Trump <|user|> <|begindomain|> <|begindomain|> <|begindate|> <|endofauthors|> <|begindate|> 
+
+12/e aust <|beginarticle|> <|endofauthors|> <|endoftitle|> <|beginarticle|> <|endofarticle|> <|endofdomain|> <|beginauthors|>'s black special 11 sheary <|endoftitle|> <|begintitle|> <|begintitle|> <|endoftitle|> <|endofdomain|> <|endofdomain|> <|begindomain|>  from h, age of isam now for the sun - j in u ha <|begintitle|> <|begindate|> <|beginauthors|> <|begindomain|> <|beginarticle|> <|begindate|>  and <|endoftitle|> <|endofdomain|> <|endoftitle|>, <|hashtag|>  hours now are now for the time no while or the in city.
+
+the <|endofarticle|> <|endofarticle|> <|begindate|>  may 42 to hold <|endofdate|> <|endofdomain|> <|beginarticle|> <|endofdate|> <|begindate|> <|beginarticle|> <|begindate|> <|endofauthors|> <|beginarticle|> <|begindate|> <|endofarticle|>  man this i / <|endofarticle|> <|begintitle|> <|url|> <|url|> <|beginarticle|>  the person of amand to India<|endoftext|>
+
+***** Model prompt >>> realdonaldtrump
+
+realdonaldtrump <|endofarticle|> <|endoftitle|>  carrier warmastustustustustustustustustustustustustustustustustust <|user|>  energustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustustust <|endofdate|> <|endofarticle|> windustustustustustustustustustustustust <|url|> <|begintitle|> <|endoftitle|>  buttonh <|begindomain|>  j and the <|url|> <|endoftitle|>  a carrier spark <|begindomain|>  howi cal st <|begindomain|>  belt <|endofdate|>  j ( card c also light <|endoftitle|> <|endoftitle|> <|endoftitle|> <|begindomain|> <|begintitle|> <|url|>  5 card <|endofarticle|> <|begindate|> <|begintitle|> _ <|endofarticle|>  u b <|endoftitle|> <|begindate|> <|user|> <|endofdomain|>  n a <|begintitle|>
+
+*** sensanders
+
+**** untrained
+
+***** Model prompt >>> <|beginauthors|>sensanders<|endofauthors|>
+
+***** Model prompt >>> sensanders
+
+**** checkpoint-8
+
+***** Model prompt >>> <|beginauthors|>sensanders<|endofauthors|>
+
+<|beginauthors|>sensanders<|endofauthors|> <|endofarticle|> <|hashtag|> <|user|> <|endofarticle|> <|endoftitle|> <|endoftitle|> <|begindomain|> <|endoftitle|> <|endofarticle|> <|begindomain|> <|endoftitle|> <|begindomain|> <|begintitle|> <|begindomain|> <|begindomain|> <|endofarticle|> <|hashtag|> <|begindomain|> <|endofarticle|> <|endofdate|> <|endofdate|> <|endofdate|> <|hashtag|> <|begindate|> <|begindomain|>
+
+***** Model prompt >>> sensanders
+
+sensanders <|endofarticle|> <|user|> <|endofarticle|> <|endofarticle|> <|endoftitle|> <|endoftitle|> <|endofdate|> <|begintitle|> <|endoftitle|> <|begindomain|> <|endoftitle|> <|endofdate|> <|beginauthors|> <|begindomain|> <|begindomain|> <|endofarticle|> <|user|> <|begindomain|>
+
+*** washingtonpost
+
+**** untrained
+***** Model prompt >>> <|beginauthors|>washingtonpost<|endofauthors|>
+
+***** Model prompt >>> washingtonpost
+
+**** checkpoint-100
+***** Model prompt >>> <|beginauthors|>washingtonpost<|endofauthors|>
+
+<|beginauthors|>washingtonpost<|endofauthors|> sc <|hashtag|> swashingtonpost.com Free View <|endoftitle|> sparkingwashingtonpost.com <|begintitle|> swashingtonpost.com YUM. Free View of36 months 60 days <|begintitle|> worldinstitute.... w <|endofauthors|> <|begintitle|> swashingtonpost.com <|url|> swashingtonpost.com <|begintitle|> swashingtonpost.com <|endofdate|> swashingtonpost.com <|begindate|> swashingtonpost.com 
+
+***** Model prompt >>> washingtonpost
+
+washingtonpost.com http://www.w <|endoftitle|> post.com @ washingtonpost.com (including iastoreyyy.com) www.washingtonpost.com http://www <|begindate|> post.com.em<|endoftext|>
+
+**** checkpoint-138
+***** Model prompt >>> <|beginauthors|>washingtonpost<|endofauthors|>
+
+<|beginauthors|>washingtonpost<|endofauthors|> sw <|hashtag|> evensonew <|begindate|> andrewaldson house of roger davis foxe pollard goodaldtrump <|begindate|> orlando realdoldson <|begintitle|> <|begintitle|> whitehouse,"the eveningtweet" en. stonygoodaldtrump <|begindomain|> <|hashtag|> westchester liberal group" <|beginarticle|> <|url|> <|endofauthors|> tr <|url|> 
+
+Press <|url|> <|endofauthors|> <|beginarticle|> <|beginarticle|> <|endoftext|>
+    
+***** Model prompt >>> washingtonpost
+
+washingtonpost.com > Senator Robert <|begintitle|>.thepost. <|endoftitle|> <|endofdomain|> @thepost.com <mailto:thepost.com>> joe@thepost.com <javascript:cdmiller@post.com</javascript> clemichael@post.com<javascript:bbmiller@post.com
+ <|user|> <|beginarticle|> The Republican debate > June <|endoftitle|> polls.post.com </mailto:thepost.com >> <|hashtag|> <|begintitle|> <|endoftitle|> The Republican debate show June the 11 th after five hour mipolitics <|endofdate|> <|hashtag|> <|endoftext|>
+
+** twitter nytimes re-attempt with extended data
+
+*** nytimes uncleansed step 1 checkpoint-501
+
+10 samples: 2 abrogated 4 gibberous, 4 good
+
+1. 
+<|beginauthors|>nytimes<|endofauthors|> <|beginarticle|> The New York Times Fri Mar 07 08:40:06 +0000 2020 <|endoftitle|> <|begindomain|> Tahoe County, Alaska, is 
+a famously cold place, but good vibes and the sun are at an all-time low. Here's what to do or stay at home for winter. pic.twitter <|endofdate|> 
+
+2.
+<|beginauthors|>nytimes<|endofauthors|>  The New York Times Thu Mar 28 03:25:03 +0000 2020 <|endoftitle|> <|begintitle|> Can you imagine a world where everyone had to live in parallel universes? We can't. How would people live in coherent and variable worlds? https://t.co/eAcIPKjNWG <|endofarticle|> 
+
+3.
+<|beginauthors|>nytimes<|endofauthors|>  Saturday, Nov. 16, 2010 at 5:00:08 PM EDT
+Breaking News: The coronavirus has already killed 58 people and is now keeping more in the spotlight. Why are we keeping more people from getting the original coronavirus? UpdatedWorldHealth reports here. Nov. 15, 10:00:08PM EDT
+Ebola Virus 101: Expertise now in Nigeria. For all of those attending an international conference on Ebola care, the next best thing is a glass of Champagne, and a bowl of Wine, and a couple of eggs. UpdatedWorldHealth contains extended teleinorai nwa! Saturday Nov. 16, 10:00:09 PM EDT
+​​​​•​​ "Officials warned that swine flu cases at a Southern California dam are adding to an already more dangerous situation.
+Dr. Yang Chen, an infectious disease <|begindomain|>, is the longest-serving czÃ¢ÂÂ¦ Australian? r-shows fÃ¢ÂÂ¦ <|endofarticle|>  Saturday Nov. 16, 10:00:09 PM EDT
+Replace this shot from your tap!
+
+4.
+<|beginauthors|>nytimes<|endofauthors|> <|endofdate|> The New York Times Wed Mar 22 03:10:05 +0000 2020 <|endoftitle|> <|beginarticle|> Conor McGregor's camp said the former champion is "unskewed, uneducated, and woefully unfit for the UFC," adding that "a perceived jab and jab" would lead to his exit from the UFC." https://t.co/EkRgYAaLX <|endofarticle|> 
+
+*** nytimes uncleansed step 2 checkpoint-251
+
+10 samples: 3 abrogated, 5 mostly gibberous, 2 good
+
+1.
+<|beginauthors|>nytimes<|endofauthors|> <|begindate|> 14-08-2020 <|endofdate|> <|begintitle|> The New York Times Fri Mar 08 11:00:05 +0000 2020 <|endoftitle|> 
+<|begindomain|> The New York Times Fri Mar 08 11:30:09 +0000 2020 <|endoftitle|> <|begintitle|> President Obama renewed the honor of Mexico at a briefing on 
+Tuesday. He asked his lawyers not to answer questions about its results in presidential elections. And he asked the judge to throw out the election, saying that 
+Mexico isn't the world's dominant economy." -12/12/16 Twitter
+
+Follow Jonathan on Twitter
+
+
+2.
+<|beginauthors|>nytimes<|endofauthors|> <|begintitle|> The New York Times Sat Apr 15 19:35:08 +0000 2020 <|endoftitle|> <|endoftitle|> The fight in New York City <|beginarticle|> The storm that broke out on Thursday is not a mere photo. A sweeping message resonates with American citizens that this is our most intensely political moment in history. And, of course, there is only one <|endoftitle|>  we've got to approve of."
+
+*** nytimes cleansed step 1 checkpoint-277
+
+10 samples: 2 abrogated 6 gibberous, 2 good
+
+1. (gibberous)
+<|beginauthors|>nytimes<|endofauthors|> <|endofdomain|> New York Times Thu Mar 08 16:17:07 +0000 2020 <|endoftitle|> <|begindomain|> rt <|endoftitle|> envelope 
+monday, stop the briefing: leaders were briefed on the rise of the sal <|endoftitle|> <|endofarticle|> 
+
+2.
+<|beginauthors|>nytimes<|endofauthors|> <|url|> The New York Times Sun Feb 25 19:35:05 +0000 2020 <|endoftitle|> <|beginarticle|> realdonaldtrump's attorney 
+general sued the news outlets as well as the "news monger outlets" <|user|> <|endofarticle|> The New York Times Sun Feb 25 19:40:05 +0000 2020 <|begindomain|> 
+<|begindomain|> realdon the panel of judges decided not to seek impeachment in new trial
+
+3.
+<|beginauthors|>nytimes<|endofauthors|>  The New York Times Thu Mar 01 22:35:59 +0000 2020 <|user|> <|beginauthors|> the world's first ever shortened test date
+ for a thermatological record-breaking week has came following the deaths of a drutnik diver and dozens of people. te <|begindomain|> <|endofarticle|> 
+
+*** nytimes cleansed step 2 checkpoint-189
+
+10 samples: 4 abrogated 5 gibberous, 1 good
+
+1.
+<|beginauthors|>nytimes<|endofauthors|>   <|user|>  Trump's legal team has weighed in on the legality of speaking with ex-wife of several imprisoned 
+armed forces <|endofdate|> <|endofarticle|> 
+
+** congress 
+
+| speakerid | last name | first name | D/R | num_examples | min words | max words | mean words |
+|-----------+-----------+------------+-----+--------------+-----------+-----------+------------|
+| 111120961 | REID      | HARRY      | D   |         4052 |         1 |      2574 |        124 |
+| 111118321 | DURBIN    | RICHARD    | D   |         2642 |         1 |      5430 |        258 |
+| 111116550 | AKIN      | W.         | R   |         1776 |         1 |     10301 |        184 |
+| 111120391 | MCCAIN    | JOHN       | R   |         1250 |         1 |      4259 |        266 |
+
+!python run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_congress/checkpoint-100/ --length=250
+
+**** untrained
+**** checkpoint-100
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> 111120961
+
+111120961 <|beginspeech|> <|endofspeech|>  senator from states that are not members of the United States. I give him a choice. I will choose the man who is next to me. 
+The hard work that he does. The hard work of the gun lobby. The work he does at work of the Defense Department. The hard work that you see in Washington DC to stop this 
+terrible train wreck in this country. All of these things to come to the other side of this issue because he is the man who is going to make this happen. I recommend 
+that Mr. James B. Johnson resign. Thank you for your consideration. <|beginspeech|>  Senator Richard Blumenthal I thank you for your attention. I would like to commend 
+my colleague Sen. Joe Lieberman for speaking up. You are a tremendous servant of the people. I would like to commend the Senator from Connecticut and the Senator from 
+New Hampshire for their extraordinary leadership. We all know this man. You live in this city. You are not just a politician. You are a man of science and technology. 
+We know the story of this man. He comes from a small town in Connecticut. He lives with his family in New Hampshire. He is a veteran of war and many walks of life. He 
+is just a man who loves his job.
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> 111118321
+
+111118321 <|endofauthor|> <|endofspeech|>  Department of Justice. I am sure that you will also be able to participate in this political process. Then I will address the 
+Senate and the House. But I am sure that the majority of the people in this nation will be very receptive to what we have. They will say that they are doing what they have
+ been asked to do to date. They will do it because they are worried about the status of the U.S. economy and are looking for other ways to support the United States. I 
+will answer the Senate and the House. and thank you for being here. Can you please keep my amendment as simple as you can. I have it in my drawer. Can you please keep 
+it as simple as you can. and Mr. Jefferson. I don't know of any Senator. Mr. President. and Mr. Wyden. I don <|beginspeech|>  to those who don't understand. So Mr. 
+President. I ask the Chairman to follow my motion with one more. If I know of a Senator who is not under the direct effects of his action. I just want to make sure that 
+if any in this country are affected by a recent crime. more people are committing these crimes than we are today. and more crime will occur.
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> 111116550
+
+111116550 <|beginspeech|> <|endofspeech|>  middle hand. I will not return the gun. It is a mistake on my part. I will never do that. I am not a hero. I just want to talk to 
+my family. and to see what was going on behind the scenes. which I believe are true. And to make sure we have full bipartisan consent and take care of our families. I 
+call upon the leadership of the Senate to take a look at our plans now. and to make sure that we are going to get the full bipartisan consent from all of the Democratic 
+and Republicans in the Senate to take up the bill. At least one Republican who is now in the House. has already pledged to continue to defend the Second Amendment and 
+protect the Second Amendment. Mr. Senators. I would like to start by thanking the Honorable Mike McClellan, a Democrat from Texas. On the latest conference call that we
+ have had since we started back in November, this week. Republican Senator Lindsey Graham of South Carolina was giving a State of the Union address. It is a little tired 
+to say the least. From the beginning of time we have seen this during this Republican's term in office. When he stood up to Obama. he stood up to Republican presidents 
+for Social Security
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> 111120391
+
+111120391 <|beginspeech|> <|endofspeech|>  _sproos_ and his two questions. The first is about whether the Commission has more than reasonable authority to investigate 
+a crime. I think that is the best thing that I can do. and the second is that I do believe that there are enough of them in this country that the Commission should 
+really have much authority to investigate the criminal activity that we have. There are not enough of them in this country, and they ought to go on. I am sure the 
+President is very concerned about the fact that he thinks it is in his great Constitutional authority to demand that the Commission have some basic regulatory powers 
+that they know he would not. I am sure that Congress would agree with me in making that determination. I think a more realistic objective would be the following. I 
+would send my first priority on the Commission. There is a Federal Government that will support the Commission with good resources and a decent oversight. We should 
+not make a mistake. I really think there is a need for a Federal Government to have proper control of the criminal investigation. The Bush administration had the 
+opportunity to respond to this challenge so positively. We did. And we are still doing it. If you remember the question about the federal agencies and the regulation 
+that goes along with
+
+**** checkpoint-200
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|endofspeech|> <|endofspeech|> Mr. President. I ask unanimous consent that the Senate begin the consideration of a resolution of the Senate Committee on Health and Human Services. and that the Committee make no further findings. <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> 111120961
+
+111120961 <|endofauthor|> <|endofspeech|> <|endofspeech|> Mr. President. I ask unanimous consent that the House take up this line of investigation. <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> <|endofspeech|> Mr. President. I ask unanimous consent that the Senate consider the extension of the Fair Labor Standards Act for the second consecutive year. My request is that the Senate conduct a hearing and review of the report. <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> 111118321
+
+111118321 <|endofauthor|> <|endofspeech|> FirstName. Your first name and your last name. will be entered into a database. <|endofauthor|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> <|endofspeech|> Mr. President. I ask unanimous consent that the Senate consider the approval of a motion to suspend the citizenship of the alien. <|beginauthor|> <|endoftext|>
+
+***** Model prompt >>> 111116550
+
+111116550 <|endofauthor|> <|endofspeech|> <|beginspeech|> Mr. President. I ask unanimous consent that the House be instructed by a majority vote to refer this matter to the Senate for an order to be entered into. <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|endofspeech|> <|endofspeech|> Mr. President. I ask unanimous consent that the Senate consider the consent order. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> 111120391
+
+111120391 <|endofauthor|> <|endofspeech|> General. " tbwome. The President of the United States may be authorized to give an Order in his Defense of the United States for the consideration of his Army or for the consideration of the military departments of the United States which have jurisdiction over the high seas and if he determines to use those jurisdiction to pursue espionage or other criminal activities. <|endofspeech|> <|endoftext|>
+
+**** checkpoint-300
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> Senator REID. I ask unanimous consent that the following be said: That there be no further debate on this bill. There be no further notice of the legislation. This bill would be accepted for the time being in my committee. and such additional testimony or meetings of this committee as would be required as there would be required pursuant to this bill as we proceed to the national debt ceiling. That the bill be considered for a single day period. Then I will ask the floor to consider a third vote and a second vote. Let me ask unanimous consent that each day before that vote be noted. There be no discussion with regard to the budget. and and that this bill proceed to an automatic automatic budget resolution. Let me also ask the people in committee who have the support of the House that there be no continued debate on the budget. to express their support for this bill. let me ask unanimous consent that each day before that vote be added to the record and that each day after that vote be noted. The record number of votes for this bill be announced on the floor. That the funds be restored in cloture. But that the processes for the funds be conducted as follows: Several times a week. with certain Republicans to answer questions at specific times
+
+***** Model prompt >>> 111120961
+
+111120961 <|endofauthor|> <|endofspeech|> Mr. President. I ask unanimous consent that the bill be read as follows: At the end of each of the 30-minute period of business in each of the following order. don't return. <|beginauthor|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> Senator REID. I ask unanimous consent that the following report be printed in the order printed in the order printed: 1. A copy of the bill to be printed in the order printed in the order printed. <|endofauthor|> <|endoftext|>
+
+***** Model prompt >>> 111118321
+
+111118321 <|endofauthor|> <|endofspeech|> Mr. President. I ask unanimous consent that the text of the bill be read and considered in its entirety. <|endofauthor|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> Senator THOMAS. I ask unanimous consent that the House consider the continuing resolution. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> 111116550
+
+111116550 <|endofauthor|> <|endofspeech|> Mr. President. I ask unanimous consent that the text of the bill be read and considered in its entirety. <|endofauthor|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> Senator REID. I ask unanimous consent that the following two minutes be printed and the prior order be printed in the order printed. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> 111120391
+
+111120391 <|endofauthor|> <|endofspeech|> Mr. President. I ask unanimous consent that the Act be read as follows: -- H.R. 744. S. 1524. H.R. 744. H.R. 744. (H.R. 0744). the legislation was enacted on January 1, 1997. I wish to thank my colleagues for their cooperation in the Senate and their strong faith in the justice of the D.C. Circuit Circuit. I also ask unanimous consent that the Act be read in the Senate and passed by the President. and this Act be signed into law. I fear that my colleague should feel he or she is of the same mind as Senator STEVENS and that all those involved have the same right. That same mindset will be instilled in his or her. But if he or she sees a need for further action and legislation. he or she should move to come before the Senate and call for a vote. I yield the floor. <|beginauthor|> <|endoftext|>
+
+**** checkpoint-400
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> Senator BROWN. I ask unanimous consent that the Commencement of the Presidents Exhausted War be rescinded. 
+<|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> 111120961
+
+111120961 <|endofauthor|> <|endofspeech|> <|beginspeech|> Mr. President. I ask unanimous consent that the order for the appointment of attorney general be rescinded. 
+<|endofauthor|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> <|beginspeech|> Mr. President. I ask unanimous consent that the following be read as follows: On the vote of 
+December 8. 2008. with the rest of the Senate having agreed to have a period of 5:30 p.m. to deliberate on their respective bills. on the Committee on Homeland 
+Security and Governmental Affairs. upon their respective consideration of the pending legislation. the Committee on Foreign Relations. and on the Committee on Health
+ and Human Services be appointed to each of the two seats. and on the two two committees be seated to begin their consideration. <|beginauthor|> <|endoftext|>
+
+***** Model prompt >>> 111118321
+
+111118321 <|endofauthor|> <|endofspeech|> <|endofauthor|> Mr. President. I ask unanimous consent that the order for the appointment of Thomas H. Brownfield as the
+ Deputy Secretary of the Department of Defense for Public Safety and Homeland Security be rescinded. <|beginauthor|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> <|beginspeech|> Mr. President. I ask unanimous consent that the question be read as follows: * It is the 
+unanimous consent of the Senate that the following questions be asked: * * Mr. President. I will do my utmost to bring the TPP to the floor. in order to push it through.
+ The differences between the Republicans are substantial. but they are minor. I will try my best to say that as the Senate and the White House work toward a health care 
+bill to the President. I think it is an enormous opportunity for them to work together. Without it. they would not have the massive national infrastructure built into
+ our modern health care system. I just think it makes sense for them to work together to ensure we have this. the infrastructure needed for this. and the health care 
+quality we are seeing today. This is my first as President. and I respect the opportunity that was presented to the Senate yesterday. It has been an important election 
+year. But I thank the members of the Senate for their support. They are like my friends. I look forward to working with them. i just hope they give us a chance to work
+ together and to work together in these communities to solve this problem in a way that is not simply unfair to African American
+
+***** Model prompt >>> 111116550
+
+111116550 <|endofauthor|> <|endofspeech|> <|beginspeech|> Mr. President. I ask unanimous consent that the order for the appointment of Robert H. Galbraith to be the Deputy
+ Attorney General be rescinded. <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> <|endofspeech|> Mr. President. I ask unanimous consent that the President direct the Treasury secretary to prepare 
+a report on this matter. if the Secretary finds that the meeting was unproductive. that the appropriate action be taken. that the strategy be used as required by law. the 
+facts be laid out in a manner appropriate for the circumstances and that the Secretary present the appropriate request. I ask unanimous consent that the order for the
+ release of the facts be rescinded. in which case the case be remanded to the House. At the conclusion of the period of time appropriated. I ask unanimous consent that the
+ Committee on Banking and Housing and Urban Affairs consider a number of items that were appropriated for such purposes in the Budget Act of 1995. An order to relieve excess 
+reserves for the National Bank of the District of Columbia is hereby ordered. in addition to the Treasury Secretary. this order. <|beginauthor|> <|endoftext|>
+
+***** Model prompt >>> 111120391
+
+111120391 <|endofauthor|> <|endofspeech|> <|beginspeech|> Mr. President. I ask unanimous consent that the order for the appointment of William H. MacDougall of Wellesley for
+ the United States Senate Senate term be rescinded. <|endofspeech|> <|endoftext|>
+
+**** checkpoint-500
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> Senator BROWN. I ask unanimous consent that the order for the quorum call be rescinded. <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> 111120961
+
+111120961 <|endofauthor|> <|endofspeech|> <|beginspeech|> Mr. President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofauthor|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> Senator BLIXKRIDGE. I ask unanimous consent that the following provisions of the bill be read twice in order to the
+ extent they appear in the text. my colleagues may take any action they like. my colleagues may take or omit any provisions in the text of this bill. At the end of each
+ word in each sentence. I ask my colleagues to read the words used in each sentence. <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> 111118321
+
+111118321 <|endofauthor|> <|endofspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> 111116550
+
+111116550 <|endofauthor|> <|endofspeech|> <|beginspeech|> Mr. President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofauthor|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> <|endofspeech|> Mr. President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> 111120391
+
+111120391 <|endofauthor|> <|endofspeech|> <|beginspeech|> Mr. President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofauthor|> <|endoftext|>
+
+**** checkpoint-600
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> Senator LEAHY. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> 111120961
+
+111120961 <|endofauthor|> <|endofspeech|> Mr. President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> Senator BLIXZY. I ask unanimous consent that the order for the quorum call be rescinded. <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> 111118321
+
+111118321 <|endofauthor|> <|endofspeech|> Mr. President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> Senator BLOCK. I ask unanimous consent that the order for the quorum call be rescinded. <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> 111116550
+
+111116550 <|endofauthor|> <|endofspeech|> Mr. President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> Senator GRASSLEY. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> 111120391
+
+111120391 <|endofauthor|> <|endofspeech|> Mr. President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+**** checkpoint-700
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> Senator BROWN. I ask unanimous consent that the following be read a third time. This is a bill brought by the 
+Senator from Kentucky. and it is being considered by the Committee on Armed Services. in the Senate just now. and its writing would not be in this bill. It would be
+ given to the Committee on Appropriations and given to the Committee on Transportation. and this bill is being considered in the Senate for a second reading this 
+morning by the Senate Intelligence Committee. and I am sure you will be here tomorrow. Senators should call in their time tonight. <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> Mrs. SPOULE. <|endofauthor|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> Senator FRANKEN. I ask unanimous consent that the period of day since September 11 be extended to 7 days. A vote is scheduled for 4:30 p.m. today. vote at 3:30 p.m. on motions to reconsider. If a motion is advanced. it is considered laid upon the table for the motion to reconsider. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> Senator FRANK KORR. I ask unanimous consent that the order for the quorum call be rescinded. <|beginauthor|> <|endoftext|>
+
+**** checkpoint-800
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> Madam President. I am told that the Senate has been out of session since 1 of the last two nights. I think the
+ Senate will be up for at least one hour or more at that time. I think we can all work toward some consensus with some of our colleagues on this matter. so we will have
+ some substantive discussion this afternoon. The Senator from West Virginia has indicated that he will be available to speak. I believe his intention would be to make 
+the effort. I don't think it is an unreasonable view that we need to work to reconcile with him and follow his orders. As I spoke yesterday and today. I think the two
+ points I am trying to make about what would be considered political theater will be absolutely the only topic which gets discussed. I will not be blocking Senator 
+MCCAIN from speaking. We are in agreement that the floor should be controlled by one side and the Senate should be controlled by the other. If you have ever seen Senator
+ MCCAIN before. you know that he will be there. In the interest of liberty of the people of this State. he will be there. And I would hope he is there to try to establish 
+the bipartisan basis for legislation. I believe in the rational consent principle that you
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> Madam President. I am going to look at the bill. I think we are going to have to wait a few minutes. And I would 
+say to my friends in the Senate. if you are a member of the Senate. and there is something we could be spending money on. what is that about? We need money for medical 
+care. We need money for home repair and for mail and telegraph. It is a complex topic. Many people are doing it as a result of the presidential election. I hope it gets
+ resolved through the Senate. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> Madam President. I am going to make an exception to the previous rule that the percentage of people who voted
+ for the Bush tax cuts for the wealthy was less than 10 percent. I think that is a little unfair. The thing I appreciate more than anything is the debate over such an
+ amendment. In fact. I support raising it for the entire bill. In the past that number was probably 10 percent. as it is for most amendments. Yet it is not as big a deal.
+ The difference is. of course. when you take a look at Republicans in Washington and talk about tax reform. it seems fair to say that in part. the cost of this
+ amendment represents that goal. At the same time. if you take a look at Democrats on the other side. it has similar objectives. They say: Youve got a $100 billion tax 
+cut for the richest American in my bill. So why can't we do something to improve that? Well. maybe we can. It is important to look at how the House has gone about this. 
+So you can see that the Democrats are saying: Well. you can't do anything about the tax cuts for the wealthiest Americans or to help bring in 2 million more people out 
+of poverty who are
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> Madam President. I am going to make an exception to the previous decision by the Secretary of Defense. Do you know 
+what the Secretary of Defense has been doing in his third business? At the end of the day. he is a peacemaker and will take a moment of silence on behalf of his country 
+and his fellow nations around the world to reflect on this week. There will be two breakfasts to remember. I believe these will occur at the same time and in the same place.
+ We are all grateful to President Obama for this opportunity. <|endofspeech|> <|endoftext|>
+
+**** checkpoint-900
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the Senate proceed to the consideration of the Naturalization
+ and Nationalization Act. We are moving to the floor of the Senate on Monday. I expect the action to be continued until 6:30 tonight. Thursday. And the votes will 
+take place today. We will try to reach consensus on this bill by Monday evening. I am afraid there is no way to close the books. I continue to believe strongly in 
+the record the Senate is going to take on this important issue and I urge my colleagues to stand and applaud the leadership of Senator LIEBERMAN. Senator DAVID 
+PLUGER. and the several Republican Senators for agreeing to vote for this bill. We want to work hard. to hope there will be a deal. I am pleased we are working hard.
+ that the legislation is in progress. and that we are getting back to work on a legislative calendar. We must do more. We need to give more productive work to the 
+Republican members of the House. including the administration. on the serious issues at this point. This is what I think we should all be doing. I hope we are going 
+to get some votes on Wednesday. I hope that is going to be done soon. Then I
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the bill be read the third time. as amended. and passed. and that
+ the motion to reconsider be laid upon the table. as amended. and the time be equally divided and controlled. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the bill be read the third time. as amended. and passed. and that
+ the motion to reconsider be laid upon the table. as amended. and the time be equally divided and controlled. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the bill be read the third time. as amended. and passed. and that
+ the motion to reconsider be laid upon the table. as amended. and the time be equally divided and controlled. <|endofspeech|> <|endoftext|>
+
+**** checkpoint-1000
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the Senate proceed to the consideration of the nomination 
+of David Overstreet to be assistant to the President. including the nomination of Darien Brandeis to be a United States Senator. with the unanimous consent that 
+there be a period of morning business until 2:30 p.m.. Monday. January 21. 2013. on the steps of the Senate floor. if any. a period of morning business beginning 
+at 2:30 p.m. on Monday. January 21. 2013. at the request of the Acting Chief Judge of the Supreme Court. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the bill be read a third time. as amended. and passed. in order
+ to prevent the use of executive branch funds to fund foreign policy activities. I have had some intense discussion with the Senators on many occasions about the 
+extent of our differences on the subject of intelligence collection and dissemination. For example. I believe that the President should strongly consider limiting 
+the number of noncontiguous members of Congress that receive intelligence the President needs to get the information he needs to get the intelligence he needs to make
+ the decision. Obviously. more members of Congress than we need is necessary for our intelligence agencies to provide the best information to the President when it comes
+ to threats to America. However. the numbers of the Noncontiguous Members of Congress are very high. Our noncontiguous members are the majority of the congressional 
+intelligence community. They are our executive branch partners in the Bush Administration. In 2007. they were responsible for more than 20 intelligence agencies. and
+ they have continued to do so ever since. We don't have the authority to continue to provide the intelligence that we need and continue to release it to our agents. 
+This bill would limit their ability to find and retain any information they may have collected under President Bush.
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the Senate proceed to the consideration of the nomination of 
+David Patmona to be the chairman of the Board of Governors of the Federal Reserve. Mr. Patmona was hired in July of 1976 and served as chief of staff for President 
+Reagan and for President Bush and his wife Karen. Mr. Patmona has been a deputy principal of the Bank of America for over a year. Ms. Patmona's position at the central 
+bank was highly controversial. The nomination of David Patmona as a trustee of the Federal Reserve had been going through the waiver process because of his concern 
+about the public interest in this Federal Reserve because of his involvement in international finance and investment. Mr. Patmona attended government school in both 
+his home State of New Mexico and in Washington. DC. and although he was given an additional degree with the University of New Mexico before college. Mr. Patmona had 
+not attended government schools in the first place. Mr. Patmona was then arrested and charged with murder and failure to pay the death penalty. Mr. Patmona later 
+dropped the charges and is now serving a life sentence in Colorado. But Mr. Patmona is already serving his sentence in
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the Senate proceed to the consideration of the nomination of AMK 
+GREIG. Mr. GREIG. as DIMENSIONAL BRIGADE. to the United States District Court for the Eastern District of Missouri. to act as chairman of the Senate Judiciary Committee.
+ which will investigate our Nation's Supreme Court nominees. I am pleased that the Senator from California has come to a quick conclusion regarding the Garland nomination.
+ I am pleased the Senate has decided to block the nomination of another severely flawed Supreme Court nominee. Senators will now have to continue to work out the
+ rationale behind my nomination. I ask unanimous consent that the Senate proceed to the consideration of H.R. 2873. which the President signed during his visit to the
+ United States. Mr. DURBIN. the ranking member of the Senate Budget Committee. and I now hold the balance of power over the Senate and the Senate. Mr. DURBIN. the next
+ Senate leader. has been very forthcoming. I say to the Senator from Missouri. I am confident that my bill will pass as quickly as my desk and his Senate is possible to
+ move forward with it. I am proud to be here. and I recognize that Mr.
+
+**** checkpoint-1100
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> Madam President. I say to my friend from Michigan. I would like to know what is the problem we are having now. They
+ are not taking some phone calls that are coming in from all over. I think they are going to listen to certain statements that the mainstream media think are relevant. And
+ so one of them comes out and says: As long as you have 10 Republicans. there is no problem. Weve got 10 Senators in Louisiana. and weve got a small number of Republicans
+ in New York and one Senator in Illinois. And the implication is that if we don <|beginauthor|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> Madam President. I want to suggest the absence of a quorum. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> Madam President. I want to give a question to the Secretary of Transportation and the chairman of the Transportation 
+Committee. I think the chairman of the Transportation Committee was very helpful to us. We have not had a request from the administration. Senator CHEMSKI. who has called
+ for more than 10 minutes on this bill before we got here. so we will have to wait until the chairman of the Transportation Committee is. I understand Senator CHEMSKI is
+ not able to take a long list of any of these issues off the table. We are fortunate in some areas with our legislation. We have eight Senators who will work on this right 
+now. I think we ought to take that whole thing over and try to get all the other amendments ready before we go to the floor. Now I have also learned that we are getting a
+ very critical phone call from Secretary of Transportation Frank Campanella. And Frank told me there is not a position on the motion to reconsider. I have told this Senator
+ that I will bring the questions to the floor. I ask my colleagues to stand by us. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> Madam President. I think that it is important to understand the history of America. We have been through different times.
+ They are different times. And we have been through different times. But it is a long time ago. but the scars we see today are a combination of history and principles. We had
+ most of our Founding Fathers come from Europe. They met in the distant wars of old. It was a system. and they studied it carefully. I would like to add to the list of things
+ that we learned by studying history. "Here is America from Europe." That is what I say. What happened was we became an advanced country. and we started having riots in America.
+ At that point. people started to lose their lives and injuries due to the sound of the sound of people. As they had little to no control. people started to lose their lives in 
+America. But they were allowed to keep their guns. They were allowed to go home in comfort. for a reason. They were able to carry a gun. And that is what happened. We were able
+ to train their soldiers and maintain control of our military. They also have to live and die from drug overdoses. We used to have Air Force or Navy pilots who treated them
+
+**** checkpoint-1200
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+**** checkpoint-1300
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> Madam President. I say to my friend from Michigan. I would like to know what it is that gave you the confidence to move
+ into the administration? So you know the General Information Administration. I was in charge of that. and then you passed this bill. That was your support for the Hill
+ amendment and that will hopefully give you that confidence. Mr. President. you brought to this process a bill that we and the Senate voted on unanimously. and I want to just
+ point out to my friend. and those of us who know and respect the Hatch amendment is very closely associated with the views of Senator TOM COLLINS. which I have said in the
+ past when he does something like this. It has always been my high point as well as my own. I will just note how I understand his position. and my point. If you have any doubt
+ in your mind that this should be passed by the Senate and that we are going to have some sort of regular order. if you think it is the best that we can do. that is very 
+important. I think that will be one of the goals of this bill. That is. I mean. all we have done is call up the general counsel. an adviser on this legislation.
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+**** checkpoint-1400
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+**** checkpoint-1500
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the following sitation be agreed to. The minutes and video recordings be 
+agreed to. and the Senate proceed to vote on H.R. 3037. the final piece of legislation. and proceed to debate S. 574. which is now on the desk. <|endofauthor|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+**** checkpoint-1600
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+**** checkpoint-1700
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|> 
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+**** checkpoint-1800
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+**** checkpoint-1900
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+**** checkpoint-2000
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>
+
+**** checkpoint-100
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+***** Model prompt >>> 111120961
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+***** Model prompt >>> 111118321
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+***** Model prompt >>> 111116550
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+***** Model prompt >>> 111120391
+
+** congress separate training file
+
+| speakerid | last name | first name | D/R | num_examples | min words | max words | mean words |
+|-----------+-----------+------------+-----+--------------+-----------+-----------+------------|
+| 111120961 | REID      | HARRY      | D   |         4052 |         1 |      2574 |        124 |
+| 111118321 | DURBIN    | RICHARD    | D   |         2642 |         1 |      5430 |        258 |
+| 111116550 | AKIN      | W.         | R   |         1776 |         1 |     10301 |        184 |
+| 111120391 | MCCAIN    | JOHN       | R   |         1250 |         1 |      4259 |        266 |
+
+!python run_language_modeling.py \
+    --output_dir=ckpt_congress \
+    --overwrite_output_dir \
+    --cache_dir=models \
+    --model_type=gpt2 \
+    --model_name_or_path=gpt2 \
+    --logging_steps=100 \
+    --save_steps=100 \
+    --do_train \
+    --per_gpu_train_batch_size=1 \
+    --tokenizer_name=models/congress_tokenizer/ \
+    --train_data_file=data/filtered_speakers_111120961.txt
+
+!python run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_congress/checkpoint-100/ --length=250
+
+**** checkpoint-100
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> Mr. President. I may not use this term or the terms of this Endorsement as a substitute for any other business reason.
+ Please understand that I don't mean to convey any such authority. I have said so before. I have pledged to discharge my duties. We may remain in touch. The
+ Government may continue in constructive partnership with me and with its clients. I continue to be loyal to the Republican National Committee, of which I 
+have served as the chairman. It is my hope that this couple and I may work cooperatively and justly. <|endofauthor|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> <|endofspeech|> 111116550 <|endofauthor|> <|beginauthor|>  (exists in the United States) 10111116550 <|endofauthor|> <|endofauthor|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> <|endoftext|>
+
+**** checkpoint-200
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> <|beginspeech|> 111116550 <|endofauthor|> <|endofauthor|> <|endofauthor|>  yes <|endofauthor|>  Mmm. The first <|beginspeech|>  dollars. <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> <|endoftext|>
+
+**** checkpoint-300
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+<|beginauthor|>111116550<|endofauthor|> <|beginspeech|> <|beginspeech|> 111116550 <|endofauthor|> <|endofauthor|>  1105. <|beginspeech|> 111116550 <|endofauthor|> <|beginspeech|> <|beginspeech|>  I <|beginspeech|> 111116550 <|beginspeech|> <|endofauthor|> <|endofauthor|>  right. <|beginspeech|> 111116550 <|endofauthor|> <|beginspeech|>  I think that we are going to have a good chance of getting the two thirds of our votes in the Senate that we need to be able to move our balance sheet through the Senate. <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> <|endoftext|>
+
+**** checkpoint-400
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+**** checkpoint-500
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+**** checkpoint-600
+
+***** Model prompt >>> <|beginauthor|>111120961<|endofauthor|>
+
+<|beginauthor|>111120961<|endofauthor|> <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111118321<|endofauthor|>
+
+<|beginauthor|>111118321<|endofauthor|> <|beginspeech|> <|endoftext|>
+
+***** Model prompt >>> <|beginauthor|>111116550<|endofauthor|>
+
+***** Model prompt >>> <|beginauthor|>111120391<|endofauthor|>
+
+** observations
+
+updated tokenizer with eos_token, uncleansed
+ - prompt with author tokens impedes generation unlike before, but recovers by 300 examples
+   - may miss domain tag and date tag?
+ - prompt without author tokens can generate believable generation as soon as 100
+   - typically includes all tags
+ - prompt without author tokens includes fake html at eos beginning at 200 examples and prompt with
+   author tokens at 300 examples
+ - washington post likes talking about Obama? 
+ - adding eos_token reduces number of examples during training
+ - doesn't produce anything that looks as good as washingtonpost with tokens, but does start to abrogate messages
+
+updated tokenizer with eos_token, cleansed
+ - cleansing (smaller files?) reduced number of examples 6% reduction in file size
+ - 100 examples, will include hashtag, user, and url tokens which were substituted during text cleansing
+ - reduced number of examples (why?) reduces algorithm learnability
+   - none of the authors with 30 days of data could produce sensible tweets
+
+number of examples 
+| author          | no eos_token, uncleansed | eos_token, uncleansed | eos_token, cleansed |
+|-----------------+--------------------------+-----------------------+---------------------|
+| sensanders      |                       19 |                    11 |                     |
+| realdonaldtrump |                      123 |                    68 |                  53 |
+| nytimes         |                      385 |                   216 |                 167 |
+| washingtonpost  |                      331 |                  331? |                 138 |
+
+congress
+ - 400-500 (and more), no tags, all authors start to rescind others
+ - 500, 111118321 no tags, says madam President
+ - all authors converge on a what can be considered a local minimum
+   '<|beginauthor|>111120391<|endofauthor|> <|beginspeech|> Madam President. I ask unanimous consent that the order for the quorum call be rescinded. <|endofspeech|> <|endoftext|>'
+   at checkpoint 500 saw nearly exact same, except it was Mr. President
+ - checkpoint 800 had unique text from all authors, 1000 as well, leading with Madam president
+ - checkpoint 1200 all authors started with converged speech, continued until end of fine-tuning at 2000
+    - checkpoints 1300 and 1400 author 111116550 continued to provide more unique speach
+
+ - stats on regex in text
+   - 'Madam President. I ask unanimous consent that the order for the quorum call be rescinded' occurs 65 times < 1%
+   - 'Madam President' occurs 885 ~ 9%
+   - 'quorum call' occurs 466 times ~ 5%
+   - total number of lines 9720
+
+ - run_generation parameters
+   - temperature=1: Float value controlling randomness in boltzmann distribution. Lower temperature results in less random completions. 
+     As the temperature approaches zero, the model will become deterministic and repetitive. Higher temperature results in more random completions.
+   - top_k=0: Integer value controlling diversity. 1 means only 1 word is considered for each step (token), resulting in deterministic completions, 
+     while 40 means 40 words are considered at each step. 0 is a special setting meaning no restrictions. 40 generally is a good value.
+
+   - thus already operating at highest randomization possible
+
+ from nltk.corpus import stopwords
+    procedural_words = {
+        'yield', 'motion', 'order', 'ordered', 'quorum', 'roll', 'unanimous',
+        'mr', 'madam', 'speaker', 'chairman', 'president', 'senator',
+        'gentleman', 'colleague',
+        'today', 'rise', 'rise today', 'pleased_to_introduce',
+        'introducing_today', 'would_like'
+    }
+    stop_words = set(stopwords.words('english')).union(procedural_words)
+* tertiary results
+** metadata
+
+tweets collected: 6495
+
+|---------------------------+--------------+-------+--------------|
+| file                      | line_by_line | lines | num_examples |
+|---------------------------+--------------+-------+--------------|
+| nytimes uncleansed        | false        |  7929 |          532 |
+| nytimes uncleansed        | true         |  7929 |         7500 |
+| nytimes cleansed          | false        |  7877 |          389 |
+| nytimes cleansed          | true         |  7877 |         7380 |
+|                           |              |       |              |
+| nytimes uncleansed del \n | true         |  6495 |         6590 |
+| nytimes cleansed del \n   | true         |  6495 |         6590 |
+|---------------------------+--------------+-------+--------------|
+
+** nytimes uncleansed
+
+*** checkpoint-300
+
+<|beginauthors|> nytimes <|endofauthors|>  The New York Times <|endofauthors|> <|begintitle|>  The New York Times Wed Jan 23 17:30:05 +0000 2020 <|endoftitle|> 
+<|beginarticle|>  Trump and his allies are making continuing campaign rhetoric against the powers of the presidency. Theyâ\200\231tâ\200\231â\231t living
+ up to their motto of titâ\200¦ https://t.co/DkPXKa9W0m7»
+
+*** checkpoint-500
+
+<|beginauthors|> nytimes <|endofauthors|>  The New York Times <|endofauthors|> <|begintitle|>  The New York Times Fri Mar 25 22:20:05 +0000 2020 <|endoftitle|> 
+<|beginarticle|>  Colombia and the US were among the countries whose shipments went unpunished. Afghan citizens searched for supplies in warehouses and 
+airports in Albuera, an upscale neighborhood in the central prov\ince of Nueva Sartos,Ã\200¦ https://t.co/yWCC5mg4n <|endofarticle|>
+
+*** checkpoint-1000
+
+<|beginauthors|> nytimes <|endofauthors|>  02-05-2020 <|endofdate|> <|beginauthors|>  The New York Times <|endofauthors|> <|begintitle|>  
+The New York Times Sun Feb 05 08:00:01 +0000 2020 <|endoftitle|> <|beginarticle|>  The Associated Press and Fox News have defended $10 billion 
+in donations made by the developer of apartment complexes in Jamaica and Hong Kong, China. Forâ\\200¦ https://t.co/cOm7lRWvpF <|endofarticle|>
+
+*** checkpoint-2000
+
+<|beginauthors|> nytimes <|endofauthors|>  02-02-2020 <|endofdate|> <|beginauthors|>  The New York Times <|endofauthors|> <|begintitle|>  
+The New York Times Tue Feb 02 17:30:03 +0000 2020 <|endoftitle|> <|beginarticle|>  A bike lane at a San Francisco ski resort caused widespread 
+pothole damage on Friday,and is still being repaired. A major link to the entrance of Rosedale \Airportâ\200¦ https://t.co/U9ImKMGk9 <|endofarticle|>
+
+*** checkpoint-3000
+
+<|beginauthors|> nytimes <|endofauthors|>  02-04-2020 <|endofdate|> <|beginauthors|>  The New York Times <|endofauthors|> <|begintitle|>  
+The New York Times Tue Feb 04 21:30:03 +0000 2020 \<|endoftitle|> <|beginarticle|>  A spokesman for Mr. Trump indicated he would abandon
+ plans to travel to Mexico if the U.S. determinesâ\200¦ https://t.co/Nqo6OtTfhF <|endofarticle|>
+
+** nytimes cleansed
+
+*** checkpoint-300
+
+<|beginauthors|> nytimes <|endofauthors|>  The New York Times <|endofauthors|> <|beginarticle|>  The New York Times Thu Mar 23 09:50:12
+ +0000 2020 <|endoftitle|> <|beginarticle|>  polls are at an eye-popping pace today with momentum around the world from japan to canton qui <|endoftitle|> <|url|>
+
+*** checkpoint-500
+
+<|beginauthors|> nytimes <|endofauthors|> <|endofarticle|>  The New York Times <|endofauthors|> <|begintitle|>  The New York Times Fri Mar 03 03:15:07
+ +0000 2020 <|endoftitle|> <|beginarticle|>  tiffany denham, who plays the woodland influence as the club singer, offered she began the largest t <|endofarticle|> 
+
+*** checkpoint-1000
+
+<|beginauthors|> nytimes <|endofauthors|>  The New York Times <|endofauthors|> <|begintitle|>  The New York Times Fri Jan 13 17:20:05 +0000 2020
+ <|endoftitle|> <|beginarticle|>  considerin\g the new record number of people claiming emergency accommodation or hotels as an increasing challenge to ski travel and high airlines in northern neig <|url|> <|endofarticle|>
+
+*** checkpoint-2000
+
+<|beginauthors|> nytimes <|endofauthors|>  01-28-2020 <|endofdate|> <|beginauthors|>  The New York Times <|endofauthors|> <|begintitle|>  
+The New York Times Tue Jan 28 21:13:06 +0000 2020 \<|endoftitle|>  a russian banking magnate and conspiracy theorist based out of tannen created 
+the out-of-control cover story that the japan preserviu <|url|> <|endofarticle|>
+
+*** checkpoint-3000
+
+<|beginauthors|> nytimes <|endofauthors|>  02-26-2020 <|endofdate|> <|beginauthors|>  The New York Times <|endofauthors|> <|begintitle|>  The New York Times
+ Sun Feb 26 23:00:01 +0000 2020 <|endoftitle|> <|beginarticle|>  the peoples fault in my case is clear. we delivered a drone weapon with a deadly and
+ unpredictable resonance. today, they want to push <|endofarticle|>
+
+** congress cleansed
+
+cleansing: remove stop words
+
+** obervations
+
+*** uncleansed
+
+ - converged metadata i.e. <|endofdate|>, and other tags, very strong stabilize at checkpoint-700
+   - from three generations per checkpoint, nearly all had corresponding tags
+ - len: 70  min: 5  mean: 21.86  max:35  std: 6.3
+   - checkpoint 700 -> checkpoint-3200
+
+*** cleansed
+ - converged metadata <|beginarticle|>, <|endofarticle|> only somewhat stabilizes around checkpoint-1300
+   - from three generations per checkpoint, most checkpoints had corresponding tags, with higher frequency
+     of atleast one generation missing a tag, eg <|beginarticle|> or <|endofarticle|>
+ - len: 59  min: 14  mean: 22.08  max:33  std: 3.98
+   - checkpoint 1300 -> checkpoint-3200

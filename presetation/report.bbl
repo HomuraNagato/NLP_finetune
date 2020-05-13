@@ -1,0 +1,28 @@
+\begin{thebibliography}{1}
+
+\bibitem{zellers19:_defen_again_neural_fake_news}
+Rowan Zellers, Ari Holtzman, Hannah Rashkin, Yonatan Bisk, Ali Farhadi,
+  Franziska Roesner, and Yejin Choi.
+\newblock {Defending Against Neural Fake News}, 2019.
+
+\bibitem{radford2019language}
+Alec Radford, Jeff Wu, Rewon Child, David Luan, Dario Amodei, and Ilya
+  Sutskever.
+\newblock Language models are unsupervised multitask learners.
+\newblock 2019.
+
+\bibitem{congress_text}
+Jesse M.~Shapiro Gentzkow, Matthew and Matt Taddy.
+\newblock Congressional record for the 43rd-114th congresses: Parsed speeches
+  and phrase counts.
+\newblock {\em Stanford Libraries}, 0, 01 2018.
+
+\bibitem{Wolf2019HuggingFacesTS}
+Thomas Wolf, Lysandre Debut, Victor Sanh, Julien Chaumond, Clement Delangue,
+  Anthony Moi, Pierric Cistac, Tim Rault, R'emi Louf, Morgan Funtowicz, and
+  Jamie Brew.
+\newblock Huggingface's transformers: State-of-the-art natural language
+  processing.
+\newblock {\em ArXiv}, abs/1910.03771, 2019.
+
+\end{thebibliography}
