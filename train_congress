@@ -1,0 +1,22 @@
+#!/bin/bash
+    
+#$ -cwd -l gpus=1
+
+# instead of source use . to activate they python virtual environment with torch installed
+. ~/Library/compute_grid_venv/bin/activate
+
+python run_language_modeling.py \
+        --output_dir=ckpt_congress \
+        --overwrite_output_dir \
+        --cache_dir=models \
+        --model_type=gpt2 \
+        --model_name_or_path=gpt2 \
+        --logging_steps=200 \
+        --save_steps=200 \
+        --line_by_line \
+        --do_train \
+        --per_gpu_train_batch_size=1 \
+        --tokenizer_name=models/congress_tokenizer/ \
+        --train_data_file=data/filtered_speakers_061.txt
+    
+deactivate

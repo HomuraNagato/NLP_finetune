@@ -1,0 +1,22 @@
+#!/bin/bash
+    
+#$ -cwd -l gpus=1
+
+# instead of source use . to activate they python virtual environment with torch installed
+. ~/Library/compute_grid_venv/bin/activate
+
+python run_language_modeling.py \
+        --output_dir=ckpt_nytimes_c \
+        --overwrite_output_dir \
+        --cache_dir=models \
+        --model_type=gpt2 \
+        --model_name_or_path=gpt2 \
+        --logging_steps=100 \
+        --save_steps=100 \
+        --line_by_line \
+        --do_train \
+        --per_gpu_train_batch_size=2 \
+        --tokenizer_name=models/twitter_tokenizer/ \
+        --train_data_file=data/nytimes_2020-01-26_2020-03-31_singleline.txt
+    
+deactivate

@@ -1,0 +1,55 @@
+#!/bin/bash
+    
+#$ -cwd -l gpus=1
+
+# help with installing torch: https://pytorch.org/get-started/locally/
+    
+# instead of source use . to activate they python virtual environment with torch installed
+. ~/Library/compute_grid_venv/bin/activate
+
+    
+# python3 -c "import torch; print('hello', torch.cuda.is_available())"
+
+# session 111
+# [ 111120961, 111118321, 111116550, 111120391 ]
+# session 061
+# [ 61076130, 61065121, 61070081, 61073010 ]
+
+for i in $(seq 1 3);
+do    
+    python3 run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_congress/checkpoint-400 --length=250 \
+            --prompt "<|beginauthors|> 61076130 <|endofauthors|>" --stop_token "<|endoftext|>" --seed $i;
+    
+    python3 run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_congress/checkpoint-400 --length=250 \
+            --prompt "<|beginauthors|> 61065121  <|endofauthors|>" --stop_token "<|endoftext|>" --seed $i;
+    
+    python3 run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_congress/checkpoint-400 --length=250 \
+            --prompt "<|beginauthors|> 61070081 <|endofauthors|>" --stop_token "<|endoftext|>" --seed $i;
+    
+    python3 run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_congress/checkpoint-400 --length=250 \
+            --prompt "<|beginauthors|> 61073010 <|endofauthors|>" --stop_token "<|endoftext|>" --seed $i;
+done
+echo '';
+
+for ckpt in $(seq 1000 1000 10000);
+do
+    echo checkpoint-$ckpt;
+    for i in $(seq 1 3);
+    do
+    python3 run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_congress/checkpoint-$ckpt --length=250 \
+            --prompt "<|beginauthors|> 61076130 <|endofauthors|>" --stop_token "<|endoftext|>" --seed $i;
+    
+    python3 run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_congress/checkpoint-$ckpt --length=250 \
+            --prompt "<|beginauthors|> 61065121 <|endofauthors|>" --stop_token "<|endoftext|>" --seed $i;
+    
+    python3 run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_congress/checkpoint-$ckpt --length=250 \
+            --prompt "<|beginauthors|> 61070081 <|endofauthors|>" --stop_token "<|endoftext|>" --seed $i;
+    
+    python3 run_generation.py --model_type=gpt2 --model_name_or_path=ckpt_congress/checkpoint-$ckpt --length=250 \
+            --prompt "<|beginauthors|> 61073010 <|endofauthors|>" --stop_token "<|endoftext|>" --seed $i;
+    
+    done
+    echo '';
+done
+
+deactivate

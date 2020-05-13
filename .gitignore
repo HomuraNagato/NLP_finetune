@@ -1,3 +1,7 @@
 
 # ignore emacs temp files
 *~
+
+# ignore large checkpoint directories
+ckpt_nytimes/
+ckpt_congress/
