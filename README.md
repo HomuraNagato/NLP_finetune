@@ -68,6 +68,7 @@ utilizes a GPU to generate various texts for a given prompt and checkpoint.
 
 ## References
 
+<a id="1">[1]</a>
 @Online{zellers19:_defen_again_neural_fake_news,
   author       = {Rowan Zellers AND Ari Holtzman AND Hannah Rashkin
                   AND Yonatan Bisk AND Ali Farhadi AND Franziska
@@ -80,6 +81,7 @@ utilizes a GPU to generate various texts for a given prompt and checkpoint.
   url = {https://arxiv.org/abs/1905.12616}
 }
 
+<a id="2">[2]</a>
 @article{radford2019language,
   title        = {Language Models are Unsupervised Multitask Learners},
   author       = {Radford, Alec and Wu, Jeff and Child, Rewon and Luan, David and Amodei, Dario and Sutskever, Ilya},
